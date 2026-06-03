@@ -6,8 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface MonthDataPoint {
-  /** YYYY-MM */
-  month: string;
-  revenue: number;
+export interface YoyMonthlyPoint {
+  /** 1-12 */
+  monthNum: number;
+  thisYear: number;
+  lastYear: number;
 }

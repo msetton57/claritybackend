@@ -5,11 +5,17 @@
  * Sales & Orders API
  * OpenAPI spec version: 0.1.0
  */
-import type { MonthDataPoint } from './monthDataPoint';
+import type { MomDailyPoint } from './momDailyPoint';
 
 export interface MomRevenueReport {
   currentMonthRevenue: number;
   previousMonthRevenue: number;
   percentChange: number;
-  dataPoints: MonthDataPoint[];
+  /** Full-month revenue projection at the current daily run rate */
+  pacedRevenue: number;
+  /** e.g. June 2026 */
+  currentYearMonth: string;
+  /** e.g. May 2026 */
+  previousYearMonth: string;
+  dailyPoints: MomDailyPoint[];
 }

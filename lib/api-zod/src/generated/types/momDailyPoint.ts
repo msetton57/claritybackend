@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface YearDataPoint {
-  year: number;
-  revenue: number;
+export interface MomDailyPoint {
+  /** Day of month 1-31 */
+  day: number;
+  thisMonth: number;
+  lastMonth: number;
 }

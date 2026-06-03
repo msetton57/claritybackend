@@ -27,9 +27,13 @@ export const GetYoyRevenueResponse = zod.object({
   "totalRevenue": zod.number(),
   "previousYearRevenue": zod.number(),
   "percentChange": zod.number(),
-  "dataPoints": zod.array(zod.object({
-  "year": zod.number(),
-  "revenue": zod.number()
+  "pacedRevenue": zod.number().describe('Full-year revenue projection at the current run rate'),
+  "currentYear": zod.number(),
+  "previousYear": zod.number(),
+  "monthlyPoints": zod.array(zod.object({
+  "monthNum": zod.number().describe('1-12'),
+  "thisYear": zod.number(),
+  "lastYear": zod.number()
 }))
 })
 
@@ -45,9 +49,13 @@ export const GetMomRevenueResponse = zod.object({
   "currentMonthRevenue": zod.number(),
   "previousMonthRevenue": zod.number(),
   "percentChange": zod.number(),
-  "dataPoints": zod.array(zod.object({
-  "month": zod.string().describe('YYYY-MM'),
-  "revenue": zod.number()
+  "pacedRevenue": zod.number().describe('Full-month revenue projection at the current daily run rate'),
+  "currentYearMonth": zod.string().describe('e.g. June 2026'),
+  "previousYearMonth": zod.string().describe('e.g. May 2026'),
+  "dailyPoints": zod.array(zod.object({
+  "day": zod.number().describe('Day of month 1-31'),
+  "thisMonth": zod.number(),
+  "lastMonth": zod.number()
 }))
 })
 

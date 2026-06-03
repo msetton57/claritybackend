@@ -24,33 +24,61 @@ function pct(current: number, previous: number): number {
 router.get("/reports/revenue/yoy", async (req, res): Promise<void> => {
   const repId = req.query.repId ? parseInt(req.query.repId as string, 10) : null;
 
-  const currentYear = new Date().getFullYear();
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const previousYear = currentYear - 1;
 
   const rows = await db
     .select({
       year: sql<number>`EXTRACT(YEAR FROM ${ordersTable.orderDate})::int`,
+      month: sql<number>`EXTRACT(MONTH FROM ${ordersTable.orderDate})::int`,
       revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
     })
     .from(ordersTable)
     .where(
       and(
         sql`${ordersTable.status} != 'cancelled'`,
+        sql`EXTRACT(YEAR FROM ${ordersTable.orderDate}) >= ${previousYear}`,
+        sql`EXTRACT(YEAR FROM ${ordersTable.orderDate}) <= ${currentYear}`,
         repId ? eq(ordersTable.repId, repId) : undefined
       )
     )
-    .groupBy(sql`EXTRACT(YEAR FROM ${ordersTable.orderDate})`)
-    .orderBy(sql`EXTRACT(YEAR FROM ${ordersTable.orderDate})`);
+    .groupBy(
+      sql`EXTRACT(YEAR FROM ${ordersTable.orderDate})`,
+      sql`EXTRACT(MONTH FROM ${ordersTable.orderDate})`
+    )
+    .orderBy(
+      sql`EXTRACT(YEAR FROM ${ordersTable.orderDate})`,
+      sql`EXTRACT(MONTH FROM ${ordersTable.orderDate})`
+    );
 
-  const dataPoints = rows.map((r) => ({ year: r.year, revenue: Number(r.revenue) }));
+  const byYearMonth = new Map<string, number>();
+  for (const r of rows) {
+    byYearMonth.set(`${r.year}-${r.month}`, Number(r.revenue));
+  }
 
-  const thisYearRevenue = dataPoints.find((d) => d.year === currentYear)?.revenue ?? 0;
-  const lastYearRevenue = dataPoints.find((d) => d.year === currentYear - 1)?.revenue ?? 0;
+  const monthlyPoints = Array.from({ length: 12 }, (_, i) => ({
+    monthNum: i + 1,
+    thisYear: byYearMonth.get(`${currentYear}-${i + 1}`) ?? 0,
+    lastYear: byYearMonth.get(`${previousYear}-${i + 1}`) ?? 0,
+  }));
+
+  const thisYearRevenue = monthlyPoints.reduce((s, p) => s + p.thisYear, 0);
+  const lastYearRevenue = monthlyPoints.reduce((s, p) => s + p.lastYear, 0);
+
+  const completedMonths = now.getMonth(); // 0-indexed: 0 = Jan done if past Jan 1
+  const currentDayOfYear = Math.floor((now.getTime() - new Date(currentYear, 0, 1).getTime()) / 86400000) + 1;
+  const daysInYear = (currentYear % 4 === 0 && (currentYear % 100 !== 0 || currentYear % 400 === 0)) ? 366 : 365;
+  const pacedRevenue = currentDayOfYear > 0 ? Math.round((thisYearRevenue / currentDayOfYear) * daysInYear * 100) / 100 : 0;
 
   res.json({
     totalRevenue: thisYearRevenue,
     previousYearRevenue: lastYearRevenue,
     percentChange: pct(thisYearRevenue, lastYearRevenue),
-    dataPoints,
+    pacedRevenue,
+    currentYear,
+    previousYear,
+    monthlyPoints,
   });
 });
 
@@ -58,38 +86,88 @@ router.get("/reports/revenue/mom", async (req, res): Promise<void> => {
   const repId = req.query.repId ? parseInt(req.query.repId as string, 10) : null;
 
   const now = new Date();
-  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const thisYear = now.getFullYear();
+  const thisMonthIdx = now.getMonth(); // 0-indexed
 
-  const rows = await db
-    .select({
-      month: sql<string>`TO_CHAR(${ordersTable.orderDate}, 'YYYY-MM')`,
-      revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
-    })
-    .from(ordersTable)
-    .where(
-      and(
-        gte(ordersTable.orderDate, twelveMonthsAgo),
-        sql`${ordersTable.status} != 'cancelled'`,
-        repId ? eq(ordersTable.repId, repId) : undefined
+  const prevMonthDate = new Date(thisYear, thisMonthIdx - 1, 1);
+  const prevYear = prevMonthDate.getFullYear();
+  const prevMonthIdx = prevMonthDate.getMonth(); // 0-indexed
+
+  const thisMonthStart = new Date(thisYear, thisMonthIdx, 1);
+  const thisMonthEnd = new Date(thisYear, thisMonthIdx + 1, 0, 23, 59, 59);
+  const prevMonthStart = new Date(prevYear, prevMonthIdx, 1);
+  const prevMonthEnd = new Date(prevYear, prevMonthIdx + 1, 0, 23, 59, 59);
+
+  const [thisRows, prevRows] = await Promise.all([
+    db
+      .select({
+        day: sql<number>`EXTRACT(DAY FROM ${ordersTable.orderDate})::int`,
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+      })
+      .from(ordersTable)
+      .where(
+        and(
+          gte(ordersTable.orderDate, thisMonthStart),
+          lte(ordersTable.orderDate, thisMonthEnd),
+          sql`${ordersTable.status} != 'cancelled'`,
+          repId ? eq(ordersTable.repId, repId) : undefined
+        )
       )
-    )
-    .groupBy(sql`TO_CHAR(${ordersTable.orderDate}, 'YYYY-MM')`)
-    .orderBy(sql`TO_CHAR(${ordersTable.orderDate}, 'YYYY-MM')`);
+      .groupBy(sql`EXTRACT(DAY FROM ${ordersTable.orderDate})`)
+      .orderBy(sql`EXTRACT(DAY FROM ${ordersTable.orderDate})`),
 
-  const dataPoints = rows.map((r) => ({ month: r.month, revenue: Number(r.revenue) }));
+    db
+      .select({
+        day: sql<number>`EXTRACT(DAY FROM ${ordersTable.orderDate})::int`,
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+      })
+      .from(ordersTable)
+      .where(
+        and(
+          gte(ordersTable.orderDate, prevMonthStart),
+          lte(ordersTable.orderDate, prevMonthEnd),
+          sql`${ordersTable.status} != 'cancelled'`,
+          repId ? eq(ordersTable.repId, repId) : undefined
+        )
+      )
+      .groupBy(sql`EXTRACT(DAY FROM ${ordersTable.orderDate})`)
+      .orderBy(sql`EXTRACT(DAY FROM ${ordersTable.orderDate})`),
+  ]);
 
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
+  const daysInPrevMonth = new Date(prevYear, prevMonthIdx + 1, 0).getDate();
+  const daysInThisMonth = new Date(thisYear, thisMonthIdx + 1, 0).getDate();
+  const maxDays = Math.max(daysInPrevMonth, daysInThisMonth);
 
-  const currentRevenue = dataPoints.find((d) => d.month === currentMonth)?.revenue ?? 0;
-  const previousRevenue = dataPoints.find((d) => d.month === prevMonth)?.revenue ?? 0;
+  const thisMap = new Map(thisRows.map((r) => [r.day, Number(r.revenue)]));
+  const prevMap = new Map(prevRows.map((r) => [r.day, Number(r.revenue)]));
+
+  const dailyPoints = Array.from({ length: maxDays }, (_, i) => ({
+    day: i + 1,
+    thisMonth: thisMap.get(i + 1) ?? 0,
+    lastMonth: prevMap.get(i + 1) ?? 0,
+  }));
+
+  const currentMonthRevenue = dailyPoints.reduce((s, p) => s + p.thisMonth, 0);
+  const previousMonthRevenue = dailyPoints.reduce((s, p) => s + p.lastMonth, 0);
+
+  const todayDay = now.getDate();
+  const pacedRevenue =
+    todayDay > 0
+      ? Math.round((currentMonthRevenue / todayDay) * daysInThisMonth * 100) / 100
+      : 0;
+
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const currentYearMonth = `${monthNames[thisMonthIdx]} ${thisYear}`;
+  const previousYearMonth = `${monthNames[prevMonthIdx]} ${prevYear}`;
 
   res.json({
-    currentMonthRevenue: currentRevenue,
-    previousMonthRevenue: previousRevenue,
-    percentChange: pct(currentRevenue, previousRevenue),
-    dataPoints,
+    currentMonthRevenue,
+    previousMonthRevenue,
+    percentChange: pct(currentMonthRevenue, previousMonthRevenue),
+    pacedRevenue,
+    currentYearMonth,
+    previousYearMonth,
+    dailyPoints,
   });
 });
 

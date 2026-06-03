@@ -460,18 +460,21 @@ components:
 
     # ── Reports ─────────────────────────────────────────────────────────────
 
-    YearDataPoint:
+    YoyMonthlyPoint:
       type: object
-      required: [year, revenue]
+      required: [monthNum, thisYear, lastYear]
       properties:
-        year:
+        monthNum:
           type: integer
-        revenue:
+          description: "1-12"
+        thisYear:
+          type: number
+        lastYear:
           type: number
 
     YoyRevenueReport:
       type: object
-      required: [totalRevenue, previousYearRevenue, percentChange, dataPoints]
+      required: [totalRevenue, previousYearRevenue, percentChange, pacedRevenue, currentYear, previousYear, monthlyPoints]
       properties:
         totalRevenue:
           type: number
@@ -479,24 +482,33 @@ components:
           type: number
         percentChange:
           type: number
-        dataPoints:
+        pacedRevenue:
+          type: number
+          description: Full-year revenue projection at the current run rate
+        currentYear:
+          type: integer
+        previousYear:
+          type: integer
+        monthlyPoints:
           type: array
           items:
-            $ref: "#/components/schemas/YearDataPoint"
+            $ref: "#/components/schemas/YoyMonthlyPoint"
 
-    MonthDataPoint:
+    MomDailyPoint:
       type: object
-      required: [month, revenue]
+      required: [day, thisMonth, lastMonth]
       properties:
-        month:
-          type: string
-          description: "YYYY-MM"
-        revenue:
+        day:
+          type: integer
+          description: "Day of month 1-31"
+        thisMonth:
+          type: number
+        lastMonth:
           type: number
 
     MomRevenueReport:
       type: object
-      required: [currentMonthRevenue, previousMonthRevenue, percentChange, dataPoints]
+      required: [currentMonthRevenue, previousMonthRevenue, percentChange, pacedRevenue, currentYearMonth, previousYearMonth, dailyPoints]
       properties:
         currentMonthRevenue:
           type: number
@@ -504,10 +516,19 @@ components:
           type: number
         percentChange:
           type: number
-        dataPoints:
+        pacedRevenue:
+          type: number
+          description: Full-month revenue projection at the current daily run rate
+        currentYearMonth:
+          type: string
+          description: "e.g. June 2026"
+        previousYearMonth:
+          type: string
+          description: "e.g. May 2026"
+        dailyPoints:
           type: array
           items:
-            $ref: "#/components/schemas/MonthDataPoint"
+            $ref: "#/components/schemas/MomDailyPoint"
 
     RevenueSummary:
       type: object

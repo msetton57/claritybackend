@@ -5,11 +5,15 @@
  * Sales & Orders API
  * OpenAPI spec version: 0.1.0
  */
-import type { YearDataPoint } from './yearDataPoint';
+import type { YoyMonthlyPoint } from './yoyMonthlyPoint';
 
 export interface YoyRevenueReport {
   totalRevenue: number;
   previousYearRevenue: number;
   percentChange: number;
-  dataPoints: YearDataPoint[];
+  /** Full-year revenue projection at the current run rate */
+  pacedRevenue: number;
+  currentYear: number;
+  previousYear: number;
+  monthlyPoints: YoyMonthlyPoint[];
 }

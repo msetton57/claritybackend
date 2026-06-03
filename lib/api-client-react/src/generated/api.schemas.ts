@@ -9,29 +9,42 @@ export interface HealthStatus {
   status: string;
 }
 
-export interface YearDataPoint {
-  year: number;
-  revenue: number;
+export interface YoyMonthlyPoint {
+  /** 1-12 */
+  monthNum: number;
+  thisYear: number;
+  lastYear: number;
 }
 
 export interface YoyRevenueReport {
   totalRevenue: number;
   previousYearRevenue: number;
   percentChange: number;
-  dataPoints: YearDataPoint[];
+  /** Full-year revenue projection at the current run rate */
+  pacedRevenue: number;
+  currentYear: number;
+  previousYear: number;
+  monthlyPoints: YoyMonthlyPoint[];
 }
 
-export interface MonthDataPoint {
-  /** YYYY-MM */
-  month: string;
-  revenue: number;
+export interface MomDailyPoint {
+  /** Day of month 1-31 */
+  day: number;
+  thisMonth: number;
+  lastMonth: number;
 }
 
 export interface MomRevenueReport {
   currentMonthRevenue: number;
   previousMonthRevenue: number;
   percentChange: number;
-  dataPoints: MonthDataPoint[];
+  /** Full-month revenue projection at the current daily run rate */
+  pacedRevenue: number;
+  /** e.g. June 2026 */
+  currentYearMonth: string;
+  /** e.g. May 2026 */
+  previousYearMonth: string;
+  dailyPoints: MomDailyPoint[];
 }
 
 export interface RevenueSummary {
