@@ -1,22 +1,33 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Sales & Orders API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: reports
+    description: Revenue reporting
+  - name: customers
+    description: Customer management
+  - name: products
+    description: SKU/product catalog
+  - name: orders
+    description: Order management
+  - name: ar
+    description: Accounts receivable
+  - name: promotions
+    description: Promotions
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +35,420 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Reports ───────────────────────────────────────────────────────────────
+
+  /reports/revenue/yoy:
+    get:
+      operationId: getYoyRevenue
+      tags: [reports]
+      summary: Year-over-year revenue summary
+      parameters:
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+          description: Filter by sales rep ID (null = entire company)
+      responses:
+        "200":
+          description: YoY revenue data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/YoyRevenueReport"
+
+  /reports/revenue/mom:
+    get:
+      operationId: getMomRevenue
+      tags: [reports]
+      summary: Month-over-month revenue summary
+      parameters:
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+          description: Filter by sales rep ID (null = entire company)
+      responses:
+        "200":
+          description: MoM revenue data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomRevenueReport"
+
+  /reports/revenue/summary:
+    get:
+      operationId: getRevenueSummary
+      tags: [reports]
+      summary: Revenue summary for a date range
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Revenue summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueSummary"
+
+  /reports/customers:
+    get:
+      operationId: getCustomerRevenueReport
+      tags: [reports]
+      summary: Customer revenue table for a date range
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Customer revenue rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerRevenueRow"
+
+  /reports/customer-detail:
+    get:
+      operationId: getCustomerRevenueDetail
+      tags: [reports]
+      summary: Product-level revenue breakdown for a customer
+      parameters:
+        - name: customerId
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: startDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Customer product breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerRevenueDetail"
+
+  # ── Sales Reps ────────────────────────────────────────────────────────────
+
+  /reps:
+    get:
+      operationId: getSalesReps
+      tags: [reports]
+      summary: List all sales representatives
+      responses:
+        "200":
+          description: Sales reps list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SalesRep"
+
+  # ── Customers ─────────────────────────────────────────────────────────────
+
+  /customers:
+    get:
+      operationId: getCustomers
+      tags: [customers]
+      summary: Search customers
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Customer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: Get customer detail including AR balance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Customer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerDetail"
+
+  # ── Products ──────────────────────────────────────────────────────────────
+
+  /products:
+    get:
+      operationId: getProducts
+      tags: [products]
+      summary: Browse/search product catalog
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: inStock
+          in: query
+          schema:
+            type: ["boolean", "null"]
+        - name: customerId
+          in: query
+          schema:
+            type: ["integer", "null"]
+          description: When set, sorts frequent items for this customer first
+      responses:
+        "200":
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+
+  /products/{id}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      summary: Get product detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetail"
+
+  # ── Orders ────────────────────────────────────────────────────────────────
+
+  /orders:
+    get:
+      operationId: getOrders
+      tags: [orders]
+      summary: List orders
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, in_transit, fulfilled, cancelled]
+        - name: customerId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Submit a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInput"
+      responses:
+        "201":
+          description: Created order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Get order detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+
+    patch:
+      operationId: updateOrder
+      tags: [orders]
+      summary: Update order (edit before fulfilment)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderUpdate"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+    delete:
+      operationId: cancelOrder
+      tags: [orders]
+      summary: Cancel an order (only if not shipped)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  # ── AR / Aging ────────────────────────────────────────────────────────────
+
+  /ar/aging:
+    get:
+      operationId: getArAging
+      tags: [ar]
+      summary: Full AR aging report
+      parameters:
+        - name: customerId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: AR aging rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ArAgingRow"
+
+  /ar/balance/{customerId}:
+    get:
+      operationId: getCustomerArBalance
+      tags: [ar]
+      summary: AR balance and credit status for a customer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: AR balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArBalance"
+
+  # ── Promotions ────────────────────────────────────────────────────────────
+
+  /promotions/active:
+    get:
+      operationId: getActivePromotions
+      tags: [promotions]
+      summary: Currently active promotions
+      responses:
+        "200":
+          description: Active promotions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Promotion"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +456,449 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    # ── Reports ─────────────────────────────────────────────────────────────
+
+    YearDataPoint:
+      type: object
+      required: [year, revenue]
+      properties:
+        year:
+          type: integer
+        revenue:
+          type: number
+
+    YoyRevenueReport:
+      type: object
+      required: [totalRevenue, previousYearRevenue, percentChange, dataPoints]
+      properties:
+        totalRevenue:
+          type: number
+        previousYearRevenue:
+          type: number
+        percentChange:
+          type: number
+        dataPoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/YearDataPoint"
+
+    MonthDataPoint:
+      type: object
+      required: [month, revenue]
+      properties:
+        month:
+          type: string
+          description: "YYYY-MM"
+        revenue:
+          type: number
+
+    MomRevenueReport:
+      type: object
+      required: [currentMonthRevenue, previousMonthRevenue, percentChange, dataPoints]
+      properties:
+        currentMonthRevenue:
+          type: number
+        previousMonthRevenue:
+          type: number
+        percentChange:
+          type: number
+        dataPoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonthDataPoint"
+
+    RevenueSummary:
+      type: object
+      required: [totalRevenue, previousPeriodRevenue, percentChange, customerCount]
+      properties:
+        totalRevenue:
+          type: number
+        previousPeriodRevenue:
+          type: number
+        percentChange:
+          type: number
+        customerCount:
+          type: integer
+
+    CustomerRevenueRow:
+      type: object
+      required: [customerId, customerName, totalRevenue, previousRevenue, percentChange, productCount]
+      properties:
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        totalRevenue:
+          type: number
+        previousRevenue:
+          type: number
+        percentChange:
+          type: number
+        productCount:
+          type: integer
+        repName:
+          type: ["string", "null"]
+
+    ProductRevenueRow:
+      type: object
+      required: [productId, productName, revenue, previousRevenue, percentChange, unitsSold]
+      properties:
+        productId:
+          type: integer
+        productName:
+          type: string
+        sku:
+          type: string
+        revenue:
+          type: number
+        previousRevenue:
+          type: number
+        percentChange:
+          type: number
+        unitsSold:
+          type: integer
+
+    CustomerRevenueDetail:
+      type: object
+      required: [customerId, customerName, totalRevenue, previousRevenue, percentChange, products]
+      properties:
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        totalRevenue:
+          type: number
+        previousRevenue:
+          type: number
+        percentChange:
+          type: number
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductRevenueRow"
+
+    SalesRep:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+
+    # ── Customers ────────────────────────────────────────────────────────────
+
+    Customer:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        repId:
+          type: ["integer", "null"]
+        repName:
+          type: ["string", "null"]
+
+    CustomerDetail:
+      type: object
+      required: [id, name, arBalance, creditLimit, availableCredit, isPastDue]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        repId:
+          type: ["integer", "null"]
+        repName:
+          type: ["string", "null"]
+        arBalance:
+          type: number
+          description: Current outstanding balance
+        creditLimit:
+          type: number
+        availableCredit:
+          type: number
+        isPastDue:
+          type: boolean
+        customTerms:
+          type: ["string", "null"]
+
+    # ── Products ──────────────────────────────────────────────────────────────
+
+    Product:
+      type: object
+      required: [id, sku, name, unitPrice, inventoryQty, inStock]
+      properties:
+        id:
+          type: integer
+        sku:
+          type: string
+        name:
+          type: string
+        unitPrice:
+          type: number
+        inventoryQty:
+          type: integer
+        inStock:
+          type: boolean
+        etaDate:
+          type: ["string", "null"]
+          format: date
+        imageUrl:
+          type: ["string", "null"]
+        orderFrequency:
+          type: ["integer", "null"]
+          description: How often this customer orders this product
+
+    ProductDetail:
+      type: object
+      required: [id, sku, name, unitPrice, inventoryQty, inStock]
+      properties:
+        id:
+          type: integer
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        unitPrice:
+          type: number
+        inventoryQty:
+          type: integer
+        inStock:
+          type: boolean
+        etaDate:
+          type: ["string", "null"]
+          format: date
+        imageUrl:
+          type: ["string", "null"]
+        activePromotion:
+          nullable: true
+          oneOf:
+            - $ref: "#/components/schemas/Promotion"
+            - type: "null"
+
+    # ── Orders ────────────────────────────────────────────────────────────────
+
+    OrderLineItem:
+      type: object
+      required: [productId, sku, productName, quantity, unitPrice, lineTotal]
+      properties:
+        productId:
+          type: integer
+        sku:
+          type: string
+        productName:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+        discountAmount:
+          type: number
+        lineTotal:
+          type: number
+        promotionName:
+          type: ["string", "null"]
+
+    OrderLineInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: integer
+        quantity:
+          type: integer
+
+    Order:
+      type: object
+      required: [id, orderNumber, customerId, customerName, orderDate, status, total]
+      properties:
+        id:
+          type: integer
+        orderNumber:
+          type: string
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        repId:
+          type: ["integer", "null"]
+        repName:
+          type: ["string", "null"]
+        orderDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [open, in_transit, fulfilled, cancelled]
+        total:
+          type: number
+        trackingNumber:
+          type: ["string", "null"]
+        shippingMethod:
+          type: ["string", "null"]
+
+    OrderDetail:
+      type: object
+      required: [id, orderNumber, customerId, customerName, orderDate, status, subtotal, total, lineItems]
+      properties:
+        id:
+          type: integer
+        orderNumber:
+          type: string
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        repId:
+          type: ["integer", "null"]
+        repName:
+          type: ["string", "null"]
+        orderDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [open, in_transit, fulfilled, cancelled]
+        subtotal:
+          type: number
+        discountTotal:
+          type: number
+        shippingCost:
+          type: number
+        total:
+          type: number
+        trackingNumber:
+          type: ["string", "null"]
+        shippingMethod:
+          type: ["string", "null"]
+        customTerms:
+          type: ["string", "null"]
+        lineItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineItem"
+
+    OrderInput:
+      type: object
+      required: [customerId, lineItems]
+      properties:
+        customerId:
+          type: integer
+        lineItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineInput"
+        shippingMethod:
+          type: string
+        shippingCost:
+          type: number
+        customTerms:
+          type: ["string", "null"]
+
+    OrderUpdate:
+      type: object
+      properties:
+        lineItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineInput"
+        shippingMethod:
+          type: ["string", "null"]
+        shippingCost:
+          type: ["number", "null"]
+        customTerms:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [open, in_transit, fulfilled, cancelled]
+        trackingNumber:
+          type: ["string", "null"]
+
+    # ── AR ────────────────────────────────────────────────────────────────────
+
+    ArAgingRow:
+      type: object
+      required: [customerId, customerName, current, days30, days60, days90, days90plus, total]
+      properties:
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        repName:
+          type: ["string", "null"]
+        current:
+          type: number
+        days30:
+          type: number
+        days60:
+          type: number
+        days90:
+          type: number
+        days90plus:
+          type: number
+        total:
+          type: number
+
+    ArBalance:
+      type: object
+      required: [customerId, customerName, balance, creditLimit, availableCredit, isPastDue, oldestInvoiceDays]
+      properties:
+        customerId:
+          type: integer
+        customerName:
+          type: string
+        balance:
+          type: number
+        creditLimit:
+          type: number
+        availableCredit:
+          type: number
+        isPastDue:
+          type: boolean
+        oldestInvoiceDays:
+          type: integer
+
+    # ── Promotions ────────────────────────────────────────────────────────────
+
+    Promotion:
+      type: object
+      required: [id, name, discountType, discountValue]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        discountType:
+          type: string
+          enum: [percent, fixed]
+        discountValue:
+          type: number
+        startDate:
+          type: ["string", "null"]
+          format: date
+        endDate:
+          type: ["string", "null"]
+          format: date
+        productIds:
+          type: array
+          items:
+            type: integer

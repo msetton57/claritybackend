@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Sales & Orders"
+version = "1.0.0"
+id = "artifacts/sales-app"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25207
+
+[services.development]
+run = "pnpm --filter @workspace/sales-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sales-app", "run", "build" ]
+publicDir = "artifacts/sales-app/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25207"
+BASE_PATH = "/"
