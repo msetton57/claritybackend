@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, ordersTable, orderItemsTable, customersTable, salesRepsTable, invoicesTable } from "@workspace/db";
-import { eq, and, gte, lte, lt, sql, desc, isNull, or } from "drizzle-orm";
+import { db, ordersTable, orderItemsTable, customersTable, salesRepsTable, invoicesTable, productsTable } from "@workspace/db";
+import { eq, and, gte, lte, lt, sql, desc, isNull, or, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -351,12 +351,13 @@ router.get("/reports/customer-detail", async (req, res): Promise<void> => {
 
   const allProductIds = [...new Set([...currentItems.map((r) => r.productId)])];
 
-  const productRows = await db.execute(
-    sql`SELECT id, sku, name FROM products WHERE id = ANY(${allProductIds})`
-  );
-  const productMap = new Map(
-    (productRows.rows as { id: number; sku: string; name: string }[]).map((p) => [p.id, p])
-  );
+  const productRows = allProductIds.length
+    ? await db
+        .select({ id: productsTable.id, sku: productsTable.sku, name: productsTable.name })
+        .from(productsTable)
+        .where(inArray(productsTable.id, allProductIds))
+    : [];
+  const productMap = new Map(productRows.map((p) => [p.id, p]));
 
   const products = currentItems
     .map((item) => {

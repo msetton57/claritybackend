@@ -72,18 +72,10 @@ router.get("/customers/:id", async (req, res): Promise<void> => {
 
   const arBalance = Number(arBalanceResult[0]?.balance ?? 0);
 
-  const pastDueResult = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(invoicesTable)
-    .where(
-      and(
-        eq(invoicesTable.customerId, id),
-        eq(invoicesTable.isPaid, false),
-        sql`${invoicesTable.dueDate} < CURRENT_DATE`
-      )
-    );
-
-  const isPastDue = Number(pastDueResult[0]?.count ?? 0) > 0;
+  const pastDueResult = await db.execute(
+    sql`SELECT COUNT(*) AS cnt FROM invoices WHERE customer_id = ${id} AND is_paid = false AND due_date::date < CURRENT_DATE`
+  );
+  const isPastDue = parseInt((pastDueResult.rows[0] as Record<string, string>)?.cnt ?? "0", 10) > 0;
 
   res.json({
     id: customer.id,
