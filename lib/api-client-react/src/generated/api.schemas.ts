@@ -73,6 +73,7 @@ export interface ProductRevenueRow {
   previousRevenue: number;
   percentChange: number;
   unitsSold: number;
+  previousUnitsSold: number;
 }
 
 export interface CustomerRevenueDetail {
@@ -91,6 +92,56 @@ export interface SalesRep {
   email?: string | null;
 }
 
+export type UserRole = typeof UserRole[keyof typeof UserRole];
+
+
+export const UserRole = {
+  admin: 'admin',
+  sales_rep: 'sales_rep',
+} as const;
+
+export type UserStatus = typeof UserStatus[keyof typeof UserStatus];
+
+
+export const UserStatus = {
+  active: 'active',
+  inactive: 'inactive',
+} as const;
+
+export interface User {
+  id: number;
+  /** @nullable */
+  salesRepId?: number | null;
+  name: string;
+  email: string;
+  /** @nullable */
+  phone?: string | null;
+  title: string;
+  role: UserRole;
+  status: UserStatus;
+  /** @nullable */
+  lastActiveAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UserInputStatus = typeof UserInputStatus[keyof typeof UserInputStatus];
+
+
+export const UserInputStatus = {
+  active: 'active',
+  inactive: 'inactive',
+} as const;
+
+export interface UserInput {
+  name: string;
+  email: string;
+  /** @nullable */
+  phone?: string | null;
+  title: string;
+  status: UserInputStatus;
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -102,6 +153,21 @@ export interface Customer {
   repId?: number | null;
   /** @nullable */
   repName?: string | null;
+}
+
+export interface InvoiceSummary {
+  id: number;
+  invoiceNumber: string;
+  amount: number;
+  amountPaid: number;
+  balanceDue: number;
+  invoiceDate: string;
+  dueDate: string;
+  isPaid: boolean;
+  /** @nullable */
+  notes?: string | null;
+  /** @nullable */
+  orderId?: number | null;
 }
 
 export interface CustomerDetail {
@@ -124,7 +190,57 @@ export interface CustomerDetail {
   isPastDue: boolean;
   /** @nullable */
   customTerms?: string | null;
+  invoices: InvoiceSummary[];
 }
+
+export interface InvoiceParty {
+  /** @nullable */
+  id?: number | null;
+  name: string;
+  /** @nullable */
+  email: string | null;
+  /** @nullable */
+  phone: string | null;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  repName?: string | null;
+}
+
+export interface InvoiceOrder {
+  id: number;
+  orderNumber: string;
+  orderDate: string;
+  /** @nullable */
+  shippingMethod?: string | null;
+  /** @nullable */
+  trackingNumber?: string | null;
+  subtotal: number;
+  discountTotal: number;
+  shippingCost: number;
+  total: number;
+  /** @nullable */
+  customTerms?: string | null;
+}
+
+export interface OrderLineItem {
+  productId: number;
+  sku: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  discountAmount?: number;
+  lineTotal: number;
+  /** @nullable */
+  promotionName?: string | null;
+}
+
+export type InvoiceDetail = InvoiceSummary & ({
+  customer: InvoiceParty;
+  company: InvoiceParty;
+  order: InvoiceOrder | null;
+  lineItems: OrderLineItem[];
+});
 
 export interface Product {
   id: number;
@@ -137,6 +253,8 @@ export interface Product {
   etaDate?: string | null;
   /** @nullable */
   imageUrl?: string | null;
+  /** @nullable */
+  packSize?: string | null;
   /**
      * How often this customer orders this product
      * @nullable
@@ -177,24 +295,49 @@ export interface ProductDetail {
   etaDate?: string | null;
   /** @nullable */
   imageUrl?: string | null;
+  /** @nullable */
+  packSize?: string | null;
+  certifications?: string[];
+  /** @nullable */
+  brochureUrl?: string | null;
+  /** @nullable */
+  infoSheetUrl?: string | null;
   activePromotion?: Promotion | null;
 }
 
-export interface OrderLineItem {
-  productId: number;
-  sku: string;
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-  discountAmount?: number;
-  lineTotal: number;
+export interface ProductUpdate {
+  sku?: string;
+  name?: string;
   /** @nullable */
-  promotionName?: string | null;
+  description?: string | null;
+  unitPrice?: number;
+  inventoryQty?: number;
+  /** @nullable */
+  etaDate?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  packSize?: string | null;
+  certifications?: string[];
+  /** @nullable */
+  brochureUrl?: string | null;
+  /** @nullable */
+  infoSheetUrl?: string | null;
+}
+
+export interface ProductSalesSummary {
+  productId: number;
+  startDate: string;
+  endDate: string;
+  unitsSold: number;
+  orderCount: number;
+  revenue: number;
 }
 
 export interface OrderLineInput {
   productId: number;
   quantity: number;
+  excludePromotion?: boolean;
 }
 
 export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
@@ -220,9 +363,14 @@ export interface Order {
   status: OrderStatus;
   total: number;
   /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
+  /** @nullable */
   trackingNumber?: string | null;
   /** @nullable */
   shippingMethod?: string | null;
+  invoice?: InvoiceSummary | null;
 }
 
 export type OrderDetailStatus = typeof OrderDetailStatus[keyof typeof OrderDetailStatus];
@@ -251,17 +399,24 @@ export interface OrderDetail {
   shippingCost?: number;
   total: number;
   /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
+  /** @nullable */
   trackingNumber?: string | null;
   /** @nullable */
   shippingMethod?: string | null;
   /** @nullable */
   customTerms?: string | null;
+  invoice?: InvoiceSummary | null;
   lineItems: OrderLineItem[];
 }
 
 export interface OrderInput {
   customerId: number;
   lineItems: OrderLineInput[];
+  /** @nullable */
+  shippingPolicyId?: number | null;
   shippingMethod?: string;
   shippingCost?: number;
   /** @nullable */
@@ -280,6 +435,10 @@ export const OrderUpdateStatus = {
 
 export interface OrderUpdate {
   lineItems?: OrderLineInput[];
+  /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
   /** @nullable */
   shippingMethod?: string | null;
   /** @nullable */
@@ -342,16 +501,24 @@ repId?: number | null;
 export type GetCustomerRevenueReportParams = {
 startDate: string;
 endDate: string;
+compareStartDate?: string;
+compareEndDate?: string;
 /**
  * @nullable
  */
 repId?: number | null;
+/**
+ * @nullable
+ */
+productId?: number | null;
 };
 
 export type GetCustomerRevenueDetailParams = {
 customerId: number;
 startDate: string;
 endDate: string;
+compareStartDate?: string;
+compareEndDate?: string;
 };
 
 export type GetCustomersParams = {
@@ -373,6 +540,11 @@ inStock?: boolean | null;
  * @nullable
  */
 customerId?: number | null;
+};
+
+export type GetProductSalesParams = {
+startDate?: string;
+endDate?: string;
 };
 
 export type GetOrdersParams = {
@@ -403,4 +575,3 @@ export type GetArAgingParams = {
  */
 customerId?: number | null;
 };
-

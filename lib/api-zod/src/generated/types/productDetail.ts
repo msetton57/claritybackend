@@ -20,5 +20,12 @@ export interface ProductDetail {
   etaDate?: Date | null;
   /** @nullable */
   imageUrl?: string | null;
+  /** @nullable */
+  packSize?: string | null;
+  certifications?: string[];
+  /** @nullable */
+  brochureUrl?: string | null;
+  /** @nullable */
+  infoSheetUrl?: string | null;
   activePromotion?: Promotion | null;
 }

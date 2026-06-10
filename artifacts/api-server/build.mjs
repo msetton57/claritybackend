@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
 import { rm } from "node:fs/promises";
@@ -9,12 +9,14 @@ import { rm } from "node:fs/promises";
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(artifactDir, "dist");
 
-async function buildAll() {
-  const distDir = path.resolve(artifactDir, "dist");
+export async function cleanDist() {
   await rm(distDir, { recursive: true, force: true });
+}
 
-  await esbuild({
+export function createBuildOptions(extraPlugins = []) {
+  return {
     entryPoints: [path.resolve(artifactDir, "src/index.ts")],
     platform: "node",
     bundle: true,
@@ -104,7 +106,8 @@ async function buildAll() {
     sourcemap: "linked",
     plugins: [
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
-      esbuildPluginPino({ transports: ["pino-pretty"] })
+      esbuildPluginPino({ transports: ["pino-pretty"] }),
+      ...extraPlugins,
     ],
     // Make sure packages that are cjs only (e.g. express) but are bundled continue to work in our esm output file
     banner: {
@@ -117,10 +120,21 @@ globalThis.__filename = __bannerUrl.fileURLToPath(import.meta.url);
 globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
-  });
+  };
 }
 
-buildAll().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+export async function buildAll() {
+  await cleanDist();
+  await esbuild(createBuildOptions());
+}
+
+const isMainModule =
+  process.argv[1] != null &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  buildAll().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

@@ -5,6 +5,7 @@
  * Sales & Orders API
  * OpenAPI spec version: 0.1.0
  */
+import type { InvoiceSummary } from './invoiceSummary';
 import type { OrderStatus } from './orderStatus';
 
 export interface Order {
@@ -20,7 +21,12 @@ export interface Order {
   status: OrderStatus;
   total: number;
   /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
+  /** @nullable */
   trackingNumber?: string | null;
   /** @nullable */
   shippingMethod?: string | null;
+  invoice?: InvoiceSummary | null;
 }

@@ -21,12 +21,185 @@ function pct(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 10000) / 100;
 }
 
+router.get("/reports/overview", async (req, res): Promise<void> => {
+  const { startDate, endDate, compareStartDate, compareEndDate } = req.query as {
+    startDate: string;
+    endDate: string;
+    compareStartDate?: string;
+    compareEndDate?: string;
+  };
+
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: "startDate and endDate are required" });
+    return;
+  }
+
+  const repId = req.query.repId ? parseInt(req.query.repId as string, 10) : null;
+  const productId = req.query.productId ? parseInt(req.query.productId as string, 10) : null;
+  const start = new Date(startDate);
+  const end = new Date(`${endDate}T23:59:59`);
+  const dayCount = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000));
+  const bucket = dayCount > 120 ? "month" : dayCount > 45 ? "week" : "day";
+
+  const periodWhere = (from: Date, to: Date) => and(
+    gte(ordersTable.orderDate, from),
+    lte(ordersTable.orderDate, to),
+    sql`${ordersTable.status} != 'cancelled'`,
+    repId ? eq(ordersTable.repId, repId) : undefined,
+  );
+
+  const loadPeriod = async (fromDate: string, toDate: string) => {
+    const from = new Date(fromDate);
+    const to = new Date(`${toDate}T23:59:59`);
+    const where = periodWhere(from, to);
+    const trendBucket = sql`DATE_TRUNC(${sql.raw(`'${bucket}'`)}, ${ordersTable.orderDate})`;
+    const productWhere = and(where, productId ? eq(orderItemsTable.productId, productId) : undefined);
+
+    const [summary, trend, products] = productId
+      ? await Promise.all([
+          db
+            .select({
+              revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+              orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+              customerCount: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+              unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+            })
+            .from(orderItemsTable)
+            .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+            .where(productWhere),
+          db
+            .select({
+              date: sql<string>`TO_CHAR(${trendBucket}, 'YYYY-MM-DD')`,
+              revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+              orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+            })
+            .from(orderItemsTable)
+            .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+            .where(productWhere)
+            .groupBy(trendBucket)
+            .orderBy(trendBucket),
+          db
+            .select({
+              productId: productsTable.id,
+              productName: productsTable.name,
+              sku: productsTable.sku,
+              category: productsTable.category,
+              revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+              unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+              orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+            })
+            .from(orderItemsTable)
+            .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+            .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+            .where(productWhere)
+            .groupBy(productsTable.id, productsTable.name, productsTable.sku, productsTable.category)
+            .orderBy(desc(sql`SUM(${orderItemsTable.lineTotal})`))
+            .limit(10),
+        ]).then(([[productSummary], trendRows, productRows]) => [productSummary, trendRows, productRows] as const)
+      : await (async () => {
+          const [[orderSummary], [itemSummary], trendRows, productRows] = await Promise.all([
+            db
+              .select({
+                revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+                orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+                customerCount: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+              })
+              .from(ordersTable)
+              .where(where),
+            db
+              .select({
+                unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+              })
+              .from(orderItemsTable)
+              .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+              .where(where),
+            db
+              .select({
+                date: sql<string>`TO_CHAR(${trendBucket}, 'YYYY-MM-DD')`,
+                revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+                orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+              })
+              .from(ordersTable)
+              .where(where)
+              .groupBy(trendBucket)
+              .orderBy(trendBucket),
+            db
+              .select({
+                productId: productsTable.id,
+                productName: productsTable.name,
+                sku: productsTable.sku,
+                category: productsTable.category,
+                revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+                unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+                orderCount: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+              })
+              .from(orderItemsTable)
+              .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+              .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+              .where(where)
+              .groupBy(productsTable.id, productsTable.name, productsTable.sku, productsTable.category)
+              .orderBy(desc(sql`SUM(${orderItemsTable.lineTotal})`))
+              .limit(10),
+          ]);
+
+          return [
+            {
+              revenue: orderSummary?.revenue ?? 0,
+              orderCount: orderSummary?.orderCount ?? 0,
+              customerCount: orderSummary?.customerCount ?? 0,
+              unitsSold: itemSummary?.unitsSold ?? 0,
+            },
+            trendRows,
+            productRows,
+          ] as const;
+        })();
+
+    const revenue = Number(summary?.revenue ?? 0);
+    const orderCount = Number(summary?.orderCount ?? 0);
+    const unitsSold = Number(summary?.unitsSold ?? 0);
+
+    return {
+      summary: {
+        revenue,
+        orderCount,
+        customerCount: Number(summary?.customerCount ?? 0),
+        unitsSold,
+        averageOrderValue: orderCount ? revenue / orderCount : 0,
+      },
+      trend: trend.map((point) => ({
+        date: point.date,
+        revenue: Number(point.revenue),
+        orderCount: Number(point.orderCount),
+      })),
+      products: products.map((product) => ({
+        ...product,
+        revenue: Number(product.revenue),
+        unitsSold: Number(product.unitsSold),
+        orderCount: Number(product.orderCount),
+      })),
+    };
+  };
+
+  const [current, comparison] = await Promise.all([
+    loadPeriod(startDate, endDate),
+    compareStartDate && compareEndDate ? loadPeriod(compareStartDate, compareEndDate) : Promise.resolve(null),
+  ]);
+
+  res.json({
+    bucket,
+    current,
+    comparison,
+  });
+});
+
 router.get("/reports/revenue/yoy", async (req, res): Promise<void> => {
   const repId = req.query.repId ? parseInt(req.query.repId as string, 10) : null;
 
   const now = new Date();
   const currentYear = now.getFullYear();
   const previousYear = currentYear - 1;
+  const currentMonthIdx = now.getMonth();
+  const currentDayOfMonth = now.getDate();
 
   const rows = await db
     .select({
@@ -57,16 +230,16 @@ router.get("/reports/revenue/yoy", async (req, res): Promise<void> => {
     byYearMonth.set(`${r.year}-${r.month}`, Number(r.revenue));
   }
 
-  const monthlyPoints = Array.from({ length: 12 }, (_, i) => ({
+  const monthlyPoints = Array.from({ length: currentMonthIdx + 1 }, (_, i) => ({
     monthNum: i + 1,
-    thisYear: byYearMonth.get(`${currentYear}-${i + 1}`) ?? 0,
-    lastYear: byYearMonth.get(`${previousYear}-${i + 1}`) ?? 0,
+    thisYear: Array.from({ length: i + 1 }, (_, monthIndex) => byYearMonth.get(`${currentYear}-${monthIndex + 1}`) ?? 0).reduce((sum, value) => sum + value, 0),
+    lastYear: Array.from({ length: i + 1 }, (_, monthIndex) => byYearMonth.get(`${previousYear}-${monthIndex + 1}`) ?? 0).reduce((sum, value) => sum + value, 0),
   }));
 
-  const thisYearRevenue = monthlyPoints.reduce((s, p) => s + p.thisYear, 0);
-  const lastYearRevenue = monthlyPoints.reduce((s, p) => s + p.lastYear, 0);
+  const lastMonthPoint = monthlyPoints[monthlyPoints.length - 1];
+  const thisYearRevenue = lastMonthPoint?.thisYear ?? 0;
+  const lastYearRevenue = lastMonthPoint?.lastYear ?? 0;
 
-  const completedMonths = now.getMonth(); // 0-indexed: 0 = Jan done if past Jan 1
   const currentDayOfYear = Math.floor((now.getTime() - new Date(currentYear, 0, 1).getTime()) / 86400000) + 1;
   const daysInYear = (currentYear % 4 === 0 && (currentYear % 100 !== 0 || currentYear % 400 === 0)) ? 366 : 365;
   const pacedRevenue = currentDayOfYear > 0 ? Math.round((thisYearRevenue / currentDayOfYear) * daysInYear * 100) / 100 : 0;
@@ -88,6 +261,7 @@ router.get("/reports/revenue/mom", async (req, res): Promise<void> => {
   const now = new Date();
   const thisYear = now.getFullYear();
   const thisMonthIdx = now.getMonth(); // 0-indexed
+  const todayDay = now.getDate();
 
   const prevMonthDate = new Date(thisYear, thisMonthIdx - 1, 1);
   const prevYear = prevMonthDate.getFullYear();
@@ -134,23 +308,21 @@ router.get("/reports/revenue/mom", async (req, res): Promise<void> => {
       .orderBy(sql`EXTRACT(DAY FROM ${ordersTable.orderDate})`),
   ]);
 
-  const daysInPrevMonth = new Date(prevYear, prevMonthIdx + 1, 0).getDate();
   const daysInThisMonth = new Date(thisYear, thisMonthIdx + 1, 0).getDate();
-  const maxDays = Math.max(daysInPrevMonth, daysInThisMonth);
 
   const thisMap = new Map(thisRows.map((r) => [r.day, Number(r.revenue)]));
   const prevMap = new Map(prevRows.map((r) => [r.day, Number(r.revenue)]));
 
-  const dailyPoints = Array.from({ length: maxDays }, (_, i) => ({
+  const dailyPoints = Array.from({ length: todayDay }, (_, i) => ({
     day: i + 1,
-    thisMonth: thisMap.get(i + 1) ?? 0,
-    lastMonth: prevMap.get(i + 1) ?? 0,
+    thisMonth: Array.from({ length: i + 1 }, (_, dayIndex) => thisMap.get(dayIndex + 1) ?? 0).reduce((sum, value) => sum + value, 0),
+    lastMonth: Array.from({ length: i + 1 }, (_, dayIndex) => prevMap.get(dayIndex + 1) ?? 0).reduce((sum, value) => sum + value, 0),
   }));
 
-  const currentMonthRevenue = dailyPoints.reduce((s, p) => s + p.thisMonth, 0);
-  const previousMonthRevenue = dailyPoints.reduce((s, p) => s + p.lastMonth, 0);
+  const lastDayPoint = dailyPoints[dailyPoints.length - 1];
+  const currentMonthRevenue = lastDayPoint?.thisMonth ?? 0;
+  const previousMonthRevenue = lastDayPoint?.lastMonth ?? 0;
 
-  const todayDay = now.getDate();
   const pacedRevenue =
     todayDay > 0
       ? Math.round((currentMonthRevenue / todayDay) * daysInThisMonth * 100) / 100
@@ -223,84 +395,171 @@ router.get("/reports/revenue/summary", async (req, res): Promise<void> => {
 });
 
 router.get("/reports/customers", async (req, res): Promise<void> => {
-  const { startDate, endDate } = req.query as { startDate: string; endDate: string };
+  const { startDate, endDate, compareStartDate, compareEndDate } = req.query as {
+    startDate: string;
+    endDate: string;
+    compareStartDate?: string;
+    compareEndDate?: string;
+  };
   const repId = req.query.repId ? parseInt(req.query.repId as string, 10) : null;
+  const productId = req.query.productId ? parseInt(req.query.productId as string, 10) : null;
 
   if (!startDate || !endDate) {
     res.status(400).json({ error: "startDate and endDate are required" });
     return;
   }
 
-  const { prevStart, prevEnd } = getPreviousPeriod(startDate, endDate);
+  const fallbackComparison = getPreviousPeriod(startDate, endDate);
+  const prevStart = compareStartDate || fallbackComparison.prevStart;
+  const prevEnd = compareEndDate || fallbackComparison.prevEnd;
 
-  const currentRows = await db
+  const currentOrderWhere = and(
+    gte(ordersTable.orderDate, new Date(startDate)),
+    lte(ordersTable.orderDate, new Date(endDate + "T23:59:59")),
+    sql`${ordersTable.status} != 'cancelled'`,
+    repId ? eq(ordersTable.repId, repId) : undefined
+  );
+  const previousOrderWhere = and(
+    gte(ordersTable.orderDate, new Date(prevStart)),
+    lte(ordersTable.orderDate, new Date(prevEnd + "T23:59:59")),
+    sql`${ordersTable.status} != 'cancelled'`,
+    repId ? eq(ordersTable.repId, repId) : undefined
+  );
+  const currentProductCountExpr = productId
+    ? sql<number>`1::int`
+    : sql<number>`COUNT(DISTINCT ${orderItemsTable.productId})::int`;
+  const currentRows = productId
+    ? await db
+        .select({
+          customerId: ordersTable.customerId,
+          customerName: customersTable.name,
+          repName: salesRepsTable.name,
+          revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .leftJoin(salesRepsTable, eq(ordersTable.repId, salesRepsTable.id))
+        .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(and(currentOrderWhere, eq(orderItemsTable.productId, productId)))
+        .groupBy(ordersTable.customerId, customersTable.name, salesRepsTable.name)
+        .orderBy(desc(sql`SUM(${orderItemsTable.lineTotal})`))
+    : await db
+        .select({
+          customerId: ordersTable.customerId,
+          customerName: customersTable.name,
+          repName: salesRepsTable.name,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .leftJoin(salesRepsTable, eq(ordersTable.repId, salesRepsTable.id))
+        .where(currentOrderWhere)
+        .groupBy(ordersTable.customerId, customersTable.name, salesRepsTable.name)
+        .orderBy(desc(sql`SUM(${ordersTable.total})`));
+
+  const prevRows = productId
+    ? await db
+        .select({
+          customerId: ordersTable.customerId,
+          customerName: customersTable.name,
+          repName: salesRepsTable.name,
+          revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .leftJoin(salesRepsTable, eq(ordersTable.repId, salesRepsTable.id))
+        .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(and(previousOrderWhere, eq(orderItemsTable.productId, productId)))
+        .groupBy(ordersTable.customerId, customersTable.name, salesRepsTable.name)
+    : await db
+        .select({
+          customerId: ordersTable.customerId,
+          customerName: customersTable.name,
+          repName: salesRepsTable.name,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .leftJoin(salesRepsTable, eq(ordersTable.repId, salesRepsTable.id))
+        .where(previousOrderWhere)
+        .groupBy(ordersTable.customerId, customersTable.name, salesRepsTable.name);
+
+  const currentProductRows = await db
     .select({
       customerId: ordersTable.customerId,
-      customerName: customersTable.name,
-      repName: salesRepsTable.name,
-      revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
-      productCount: sql<number>`COUNT(DISTINCT ${orderItemsTable.productId})::int`,
+      productCount: currentProductCountExpr,
     })
     .from(ordersTable)
-    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-    .leftJoin(salesRepsTable, eq(ordersTable.repId, salesRepsTable.id))
-    .leftJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
-    .where(
-      and(
-        gte(ordersTable.orderDate, new Date(startDate)),
-        lte(ordersTable.orderDate, new Date(endDate + "T23:59:59")),
-        sql`${ordersTable.status} != 'cancelled'`,
-        repId ? eq(ordersTable.repId, repId) : undefined
-      )
-    )
-    .groupBy(ordersTable.customerId, customersTable.name, salesRepsTable.name)
-    .orderBy(desc(sql`SUM(${ordersTable.total})`));
-
-  const prevRows = await db
-    .select({
-      customerId: ordersTable.customerId,
-      revenue: sql<number>`COALESCE(SUM(${ordersTable.total}), 0)::float`,
-    })
-    .from(ordersTable)
-    .where(
-      and(
-        gte(ordersTable.orderDate, new Date(prevStart)),
-        lte(ordersTable.orderDate, new Date(prevEnd + "T23:59:59")),
-        sql`${ordersTable.status} != 'cancelled'`,
-        repId ? eq(ordersTable.repId, repId) : undefined
-      )
-    )
+    .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+    .where(and(currentOrderWhere, productId ? eq(orderItemsTable.productId, productId) : undefined))
     .groupBy(ordersTable.customerId);
 
-  const prevMap = new Map(prevRows.map((r) => [r.customerId, Number(r.revenue)]));
+  const productCountMap = new Map(
+    currentProductRows.map((row) => [row.customerId, Number(row.productCount)])
+  );
 
-  const result = currentRows.map((r) => {
-    const prev = prevMap.get(r.customerId) ?? 0;
-    const curr = Number(r.revenue);
+  const currentMap = new Map(
+    currentRows.map((row) => [
+      row.customerId,
+      {
+        customerName: row.customerName,
+        repName: row.repName ?? null,
+        totalRevenue: Number(row.revenue),
+        productCount: productCountMap.get(row.customerId) ?? 0,
+      },
+    ])
+  );
+
+  const prevMap = new Map(
+    prevRows.map((row) => [
+      row.customerId,
+      {
+        customerName: row.customerName,
+        repName: row.repName ?? null,
+        previousRevenue: Number(row.revenue),
+      },
+    ])
+  );
+
+  const customerIds = [...new Set([...currentMap.keys(), ...prevMap.keys()])];
+
+  const result = customerIds.map((customerId) => {
+    const current = currentMap.get(customerId);
+    const previous = prevMap.get(customerId);
+    const curr = current?.totalRevenue ?? 0;
+    const prev = previous?.previousRevenue ?? 0;
+
     return {
-      customerId: r.customerId,
-      customerName: r.customerName,
+      customerId,
+      customerName: current?.customerName ?? previous?.customerName ?? `Customer #${customerId}`,
       totalRevenue: curr,
       previousRevenue: prev,
       percentChange: pct(curr, prev),
-      productCount: Number(r.productCount),
-      repName: r.repName ?? null,
+      productCount: current?.productCount ?? 0,
+      repName: current?.repName ?? previous?.repName ?? null,
     };
-  });
+  }).sort((a, b) => b.totalRevenue - a.totalRevenue);
 
   res.json(result);
 });
 
 router.get("/reports/customer-detail", async (req, res): Promise<void> => {
   const customerId = parseInt(req.query.customerId as string, 10);
-  const { startDate, endDate } = req.query as { startDate: string; endDate: string };
+  const { startDate, endDate, compareStartDate, compareEndDate } = req.query as {
+    startDate: string;
+    endDate: string;
+    compareStartDate?: string;
+    compareEndDate?: string;
+  };
 
   if (!customerId || !startDate || !endDate) {
     res.status(400).json({ error: "customerId, startDate and endDate are required" });
     return;
   }
 
-  const { prevStart, prevEnd } = getPreviousPeriod(startDate, endDate);
+  const fallbackComparison = getPreviousPeriod(startDate, endDate);
+  const prevStart = compareStartDate || fallbackComparison.prevStart;
+  const prevEnd = compareEndDate || fallbackComparison.prevEnd;
 
   const [customer] = await db
     .select({ name: customersTable.name })
@@ -334,6 +593,7 @@ router.get("/reports/customer-detail", async (req, res): Promise<void> => {
     .select({
       productId: orderItemsTable.productId,
       revenue: sql<number>`COALESCE(SUM(${orderItemsTable.lineTotal}), 0)::float`,
+      unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
     })
     .from(orderItemsTable)
     .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
@@ -347,9 +607,12 @@ router.get("/reports/customer-detail", async (req, res): Promise<void> => {
     )
     .groupBy(orderItemsTable.productId);
 
-  const prevMap = new Map(prevItems.map((r) => [r.productId, Number(r.revenue)]));
-
-  const allProductIds = [...new Set([...currentItems.map((r) => r.productId)])];
+  const currentMap = new Map(currentItems.map((row) => [row.productId, row]));
+  const prevMap = new Map(prevItems.map((row) => [row.productId, row]));
+  const allProductIds = [...new Set([
+    ...currentItems.map((row) => row.productId),
+    ...prevItems.map((row) => row.productId),
+  ])];
 
   const productRows = allProductIds.length
     ? await db
@@ -359,19 +622,22 @@ router.get("/reports/customer-detail", async (req, res): Promise<void> => {
     : [];
   const productMap = new Map(productRows.map((p) => [p.id, p]));
 
-  const products = currentItems
-    .map((item) => {
-      const prev = prevMap.get(item.productId) ?? 0;
-      const curr = Number(item.revenue);
-      const prod = productMap.get(item.productId);
+  const products = allProductIds
+    .map((productId) => {
+      const current = currentMap.get(productId);
+      const previous = prevMap.get(productId);
+      const prev = Number(previous?.revenue ?? 0);
+      const curr = Number(current?.revenue ?? 0);
+      const prod = productMap.get(productId);
       return {
-        productId: item.productId,
-        productName: prod?.name ?? `Product #${item.productId}`,
+        productId,
+        productName: prod?.name ?? `Product #${productId}`,
         sku: prod?.sku ?? "",
         revenue: curr,
         previousRevenue: prev,
         percentChange: pct(curr, prev),
-        unitsSold: Number(item.unitsSold),
+        unitsSold: Number(current?.unitsSold ?? 0),
+        previousUnitsSold: Number(previous?.unitsSold ?? 0),
       };
     })
     .sort((a, b) => a.percentChange - b.percentChange);

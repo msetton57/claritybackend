@@ -25,7 +25,9 @@ export function formatPercent(value: number): string {
 }
 
 export function formatDate(dateString: string): string {
-  const date = new Date(dateString);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateString)
+    ? new Date(`${dateString}T12:00:00`)
+    : new Date(dateString);
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",

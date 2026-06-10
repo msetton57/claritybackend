@@ -14,3 +14,8 @@ export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
+export * from "./schema/customer_pricing";
+export * from "./schema/shipping_policies";
+export * from "./schema/supply_management";
+export * from "./schema/workspace_documents";
+export * from "./schema/beta_persistence";

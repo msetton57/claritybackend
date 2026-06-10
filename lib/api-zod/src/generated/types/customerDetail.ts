@@ -5,6 +5,7 @@
  * Sales & Orders API
  * OpenAPI spec version: 0.1.0
  */
+import type { InvoiceSummary } from './invoiceSummary';
 
 export interface CustomerDetail {
   id: number;
@@ -26,4 +27,5 @@ export interface CustomerDetail {
   isPastDue: boolean;
   /** @nullable */
   customTerms?: string | null;
+  invoices: InvoiceSummary[];
 }

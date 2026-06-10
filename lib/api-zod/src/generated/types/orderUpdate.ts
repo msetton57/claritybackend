@@ -11,6 +11,10 @@ import type { OrderUpdateStatus } from './orderUpdateStatus';
 export interface OrderUpdate {
   lineItems?: OrderLineInput[];
   /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
+  /** @nullable */
   shippingMethod?: string | null;
   /** @nullable */
   shippingCost?: number | null;

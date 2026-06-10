@@ -17,6 +17,8 @@ export interface Product {
   etaDate?: Date | null;
   /** @nullable */
   imageUrl?: string | null;
+  /** @nullable */
+  packSize?: string | null;
   /**
      * How often this customer orders this product
      * @nullable

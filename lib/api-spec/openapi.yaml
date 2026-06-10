@@ -17,6 +17,10 @@ tags:
     description: SKU/product catalog
   - name: orders
     description: Order management
+  - name: users
+    description: User and sales team administration
+  - name: invoices
+    description: Invoice documents
   - name: ar
     description: Accounts receivable
   - name: promotions
@@ -124,7 +128,21 @@ paths:
           schema:
             type: string
             format: date
+        - name: compareStartDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: compareEndDate
+          in: query
+          schema:
+            type: string
+            format: date
         - name: repId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: productId
           in: query
           schema:
             type: ["integer", "null"]
@@ -161,6 +179,16 @@ paths:
           schema:
             type: string
             format: date
+        - name: compareStartDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: compareEndDate
+          in: query
+          schema:
+            type: string
+            format: date
       responses:
         "200":
           description: Customer product breakdown
@@ -169,7 +197,77 @@ paths:
               schema:
                 $ref: "#/components/schemas/CustomerRevenueDetail"
 
-  # ── Sales Reps ────────────────────────────────────────────────────────────
+  # ── Users & Sales Reps ────────────────────────────────────────────────────
+
+  /users/me:
+    get:
+      operationId: getCurrentUser
+      tags: [users]
+      summary: Get the current application user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users:
+    get:
+      operationId: getUsers
+      tags: [users]
+      summary: List users (admin only)
+      responses:
+        "200":
+          description: User directory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a sales rep user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update a user (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
 
   /reps:
     get:
@@ -280,6 +378,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductDetail"
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update catalog product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+      responses:
+        "200":
+          description: Updated product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetail"
+
+  /products/{id}/sales:
+    get:
+      operationId: getProductSales
+      tags: [products]
+      summary: Product sales summary for a date range
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Product sales summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductSalesSummary"
 
   # ── Orders ────────────────────────────────────────────────────────────────
 
@@ -372,6 +522,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
+
+  /invoices/{id}:
+    get:
+      operationId: getInvoice
+      tags: [invoices]
+      summary: Get invoice detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Invoice detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceDetail"
 
     delete:
       operationId: cancelOrder
@@ -474,7 +643,16 @@ components:
 
     YoyRevenueReport:
       type: object
-      required: [totalRevenue, previousYearRevenue, percentChange, pacedRevenue, currentYear, previousYear, monthlyPoints]
+      required:
+        [
+          totalRevenue,
+          previousYearRevenue,
+          percentChange,
+          pacedRevenue,
+          currentYear,
+          previousYear,
+          monthlyPoints,
+        ]
       properties:
         totalRevenue:
           type: number
@@ -508,7 +686,16 @@ components:
 
     MomRevenueReport:
       type: object
-      required: [currentMonthRevenue, previousMonthRevenue, percentChange, pacedRevenue, currentYearMonth, previousYearMonth, dailyPoints]
+      required:
+        [
+          currentMonthRevenue,
+          previousMonthRevenue,
+          percentChange,
+          pacedRevenue,
+          currentYearMonth,
+          previousYearMonth,
+          dailyPoints,
+        ]
       properties:
         currentMonthRevenue:
           type: number
@@ -532,7 +719,8 @@ components:
 
     RevenueSummary:
       type: object
-      required: [totalRevenue, previousPeriodRevenue, percentChange, customerCount]
+      required:
+        [totalRevenue, previousPeriodRevenue, percentChange, customerCount]
       properties:
         totalRevenue:
           type: number
@@ -545,7 +733,15 @@ components:
 
     CustomerRevenueRow:
       type: object
-      required: [customerId, customerName, totalRevenue, previousRevenue, percentChange, productCount]
+      required:
+        [
+          customerId,
+          customerName,
+          totalRevenue,
+          previousRevenue,
+          percentChange,
+          productCount,
+        ]
       properties:
         customerId:
           type: integer
@@ -564,7 +760,16 @@ components:
 
     ProductRevenueRow:
       type: object
-      required: [productId, productName, revenue, previousRevenue, percentChange, unitsSold]
+      required:
+        [
+          productId,
+          productName,
+          revenue,
+          previousRevenue,
+          percentChange,
+          unitsSold,
+          previousUnitsSold,
+        ]
       properties:
         productId:
           type: integer
@@ -580,10 +785,20 @@ components:
           type: number
         unitsSold:
           type: integer
+        previousUnitsSold:
+          type: integer
 
     CustomerRevenueDetail:
       type: object
-      required: [customerId, customerName, totalRevenue, previousRevenue, percentChange, products]
+      required:
+        [
+          customerId,
+          customerName,
+          totalRevenue,
+          previousRevenue,
+          percentChange,
+          products,
+        ]
       properties:
         customerId:
           type: integer
@@ -611,6 +826,56 @@ components:
         email:
           type: ["string", "null"]
 
+    User:
+      type: object
+      required: [id, name, email, title, role, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        salesRepId:
+          type: ["integer", "null"]
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: ["string", "null"]
+        title:
+          type: string
+        role:
+          type: string
+          enum: [admin, sales_rep]
+        status:
+          type: string
+          enum: [active, inactive]
+        lastActiveAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserInput:
+      type: object
+      required: [name, email, title, status]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: ["string", "null"]
+        title:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive]
+
     # ── Customers ────────────────────────────────────────────────────────────
 
     Customer:
@@ -632,7 +897,8 @@ components:
 
     CustomerDetail:
       type: object
-      required: [id, name, arBalance, creditLimit, availableCredit, isPastDue]
+      required:
+        [id, name, arBalance, creditLimit, availableCredit, isPastDue, invoices]
       properties:
         id:
           type: integer
@@ -659,6 +925,118 @@ components:
           type: boolean
         customTerms:
           type: ["string", "null"]
+        invoices:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceSummary"
+
+    InvoiceSummary:
+      type: object
+      required:
+        [
+          id,
+          invoiceNumber,
+          amount,
+          amountPaid,
+          balanceDue,
+          invoiceDate,
+          dueDate,
+          isPaid,
+        ]
+      properties:
+        id:
+          type: integer
+        invoiceNumber:
+          type: string
+        amount:
+          type: number
+        amountPaid:
+          type: number
+        balanceDue:
+          type: number
+        invoiceDate:
+          type: string
+          format: date
+        dueDate:
+          type: string
+          format: date
+        isPaid:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        orderId:
+          type: ["integer", "null"]
+
+    InvoiceParty:
+      type: object
+      required: [name, email, phone]
+      properties:
+        id:
+          type: ["integer", "null"]
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        repName:
+          type: ["string", "null"]
+
+    InvoiceOrder:
+      type: object
+      required:
+        [
+          id,
+          orderNumber,
+          orderDate,
+          subtotal,
+          discountTotal,
+          shippingCost,
+          total,
+        ]
+      properties:
+        id:
+          type: integer
+        orderNumber:
+          type: string
+        orderDate:
+          type: string
+          format: date-time
+        shippingMethod:
+          type: ["string", "null"]
+        trackingNumber:
+          type: ["string", "null"]
+        subtotal:
+          type: number
+        discountTotal:
+          type: number
+        shippingCost:
+          type: number
+        total:
+          type: number
+        customTerms:
+          type: ["string", "null"]
+
+    InvoiceDetail:
+      allOf:
+        - $ref: "#/components/schemas/InvoiceSummary"
+        - type: object
+          required: [customer, company, order, lineItems]
+          properties:
+            customer:
+              $ref: "#/components/schemas/InvoiceParty"
+            company:
+              $ref: "#/components/schemas/InvoiceParty"
+            order:
+              oneOf:
+                - $ref: "#/components/schemas/InvoiceOrder"
+                - type: "null"
+            lineItems:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrderLineItem"
 
     # ── Products ──────────────────────────────────────────────────────────────
 
@@ -682,6 +1060,8 @@ components:
           type: ["string", "null"]
           format: date
         imageUrl:
+          type: ["string", "null"]
+        packSize:
           type: ["string", "null"]
         orderFrequency:
           type: ["integer", "null"]
@@ -710,11 +1090,69 @@ components:
           format: date
         imageUrl:
           type: ["string", "null"]
+        packSize:
+          type: ["string", "null"]
+        certifications:
+          type: array
+          items:
+            type: string
+        brochureUrl:
+          type: ["string", "null"]
+        infoSheetUrl:
+          type: ["string", "null"]
         activePromotion:
           nullable: true
           oneOf:
             - $ref: "#/components/schemas/Promotion"
             - type: "null"
+
+    ProductUpdate:
+      type: object
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        unitPrice:
+          type: number
+        inventoryQty:
+          type: integer
+        etaDate:
+          type: ["string", "null"]
+          format: date
+        imageUrl:
+          type: ["string", "null"]
+        packSize:
+          type: ["string", "null"]
+        certifications:
+          type: array
+          items:
+            type: string
+        brochureUrl:
+          type: ["string", "null"]
+        infoSheetUrl:
+          type: ["string", "null"]
+
+    ProductSalesSummary:
+      type: object
+      required: [productId, startDate, endDate, unitsSold, orderCount, revenue]
+      properties:
+        productId:
+          type: integer
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        unitsSold:
+          type: integer
+        orderCount:
+          type: integer
+        revenue:
+          type: number
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
@@ -747,10 +1185,13 @@ components:
           type: integer
         quantity:
           type: integer
+        excludePromotion:
+          type: boolean
 
     Order:
       type: object
-      required: [id, orderNumber, customerId, customerName, orderDate, status, total]
+      required:
+        [id, orderNumber, customerId, customerName, orderDate, status, total]
       properties:
         id:
           type: integer
@@ -772,14 +1213,33 @@ components:
           enum: [open, in_transit, fulfilled, cancelled]
         total:
           type: number
+        shippingPolicyId:
+          type: ["integer", "null"]
+        shippingCarrier:
+          type: ["string", "null"]
         trackingNumber:
           type: ["string", "null"]
         shippingMethod:
           type: ["string", "null"]
+        invoice:
+          oneOf:
+            - $ref: "#/components/schemas/InvoiceSummary"
+            - type: "null"
 
     OrderDetail:
       type: object
-      required: [id, orderNumber, customerId, customerName, orderDate, status, subtotal, total, lineItems]
+      required:
+        [
+          id,
+          orderNumber,
+          customerId,
+          customerName,
+          orderDate,
+          status,
+          subtotal,
+          total,
+          lineItems,
+        ]
       properties:
         id:
           type: integer
@@ -807,12 +1267,20 @@ components:
           type: number
         total:
           type: number
+        shippingPolicyId:
+          type: ["integer", "null"]
+        shippingCarrier:
+          type: ["string", "null"]
         trackingNumber:
           type: ["string", "null"]
         shippingMethod:
           type: ["string", "null"]
         customTerms:
           type: ["string", "null"]
+        invoice:
+          oneOf:
+            - $ref: "#/components/schemas/InvoiceSummary"
+            - type: "null"
         lineItems:
           type: array
           items:
@@ -828,6 +1296,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OrderLineInput"
+        shippingPolicyId:
+          type: ["integer", "null"]
         shippingMethod:
           type: string
         shippingCost:
@@ -842,6 +1312,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OrderLineInput"
+        shippingPolicyId:
+          type: ["integer", "null"]
+        shippingCarrier:
+          type: ["string", "null"]
         shippingMethod:
           type: ["string", "null"]
         shippingCost:
@@ -858,7 +1332,17 @@ components:
 
     ArAgingRow:
       type: object
-      required: [customerId, customerName, current, days30, days60, days90, days90plus, total]
+      required:
+        [
+          customerId,
+          customerName,
+          current,
+          days30,
+          days60,
+          days90,
+          days90plus,
+          total,
+        ]
       properties:
         customerId:
           type: integer
@@ -881,7 +1365,16 @@ components:
 
     ArBalance:
       type: object
-      required: [customerId, customerName, balance, creditLimit, availableCredit, isPastDue, oldestInvoiceDays]
+      required:
+        [
+          customerId,
+          customerName,
+          balance,
+          creditLimit,
+          availableCredit,
+          isPastDue,
+          oldestInvoiceDays,
+        ]
       properties:
         customerId:
           type: integer

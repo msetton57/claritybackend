@@ -9,4 +9,5 @@
 export interface OrderLineInput {
   productId: number;
   quantity: number;
+  excludePromotion?: boolean;
 }

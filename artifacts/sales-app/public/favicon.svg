@@ -1,3 +1,4 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="86" fill="#243F68"/>
+  <path d="M331.5 174.6C313.6 156.8 289.1 146 259.8 146C198.7 146 154 190.4 154 256C154 321.6 198.7 366 259.8 366C289.3 366 314.1 355.1 332 337L370.5 374.4C342.9 402.7 305.8 419 259.8 419C165.8 419 93 350.7 93 256C93 161.3 165.8 93 259.8 93C305.3 93 342.3 109.1 369.8 137.1L331.5 174.6Z" fill="white"/>
 </svg>

@@ -10,6 +10,7 @@ import type { OrderLineInput } from './orderLineInput';
 export interface OrderInput {
   customerId: number;
   lineItems: OrderLineInput[];
+  shippingPolicyId?: number | null;
   shippingMethod?: string;
   shippingCost?: number;
   /** @nullable */

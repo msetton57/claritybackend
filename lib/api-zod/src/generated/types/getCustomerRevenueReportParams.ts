@@ -9,8 +9,14 @@
 export type GetCustomerRevenueReportParams = {
 startDate: Date;
 endDate: Date;
+compareStartDate?: Date;
+compareEndDate?: Date;
 /**
  * @nullable
  */
 repId?: number | null;
+/**
+ * @nullable
+ */
+productId?: number | null;
 };

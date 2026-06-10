@@ -5,6 +5,7 @@
  * Sales & Orders API
  * OpenAPI spec version: 0.1.0
  */
+import type { InvoiceSummary } from './invoiceSummary';
 import type { OrderDetailStatus } from './orderDetailStatus';
 import type { OrderLineItem } from './orderLineItem';
 
@@ -24,10 +25,15 @@ export interface OrderDetail {
   shippingCost?: number;
   total: number;
   /** @nullable */
+  shippingPolicyId?: number | null;
+  /** @nullable */
+  shippingCarrier?: string | null;
+  /** @nullable */
   trackingNumber?: string | null;
   /** @nullable */
   shippingMethod?: string | null;
   /** @nullable */
   customTerms?: string | null;
+  invoice?: InvoiceSummary | null;
   lineItems: OrderLineItem[];
 }

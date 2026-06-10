@@ -14,4 +14,5 @@ export interface ProductRevenueRow {
   previousRevenue: number;
   percentChange: number;
   unitsSold: number;
+  previousUnitsSold: number;
 }

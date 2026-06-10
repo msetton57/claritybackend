@@ -10,4 +10,6 @@ export type GetCustomerRevenueDetailParams = {
 customerId: number;
 startDate: Date;
 endDate: Date;
+compareStartDate?: Date;
+compareEndDate?: Date;
 };

@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: clarity
+    ports:
+      - "5432:5432"
+    volumes:
+      - clarity_pgdata:/var/lib/postgresql/data
+
+  migrate:
+    image: postgres:16
+    working_dir: /workspace
+    command:
+      - /bin/sh
+      - -lc
+      - >
+        until pg_isready -h postgres -U postgres -d clarity; do sleep 1; done &&
+        for file in /workspace/lib/db/migrations/*.sql; do
+          psql -h postgres -U postgres -d clarity -f "$$file";
+        done
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./lib:/workspace/lib:ro
+    depends_on:
+      - postgres
+
+  api:
+    build: .
+    working_dir: /app
+    command: pnpm --filter @workspace/api-server run dev
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./lib:/app/lib
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json:ro
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml:ro
+      - ./tsconfig.base.json:/app/tsconfig.base.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      BASE_PATH: /
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/clarity
+      CI: "true"
+    ports:
+      - "5000:5000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  sales-app:
+    build: .
+    working_dir: /app
+    command: pnpm --filter @workspace/sales-app run dev
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./lib:/app/lib
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json:ro
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml:ro
+      - ./tsconfig.base.json:/app/tsconfig.base.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    environment:
+      PORT: 5173
+      BASE_PATH: /
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/clarity
+      CI: "true"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  clarity_pgdata:
