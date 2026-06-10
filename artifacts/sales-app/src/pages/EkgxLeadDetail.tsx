@@ -278,15 +278,19 @@ export default function EkgxLeadDetail() {
                   variant="outline"
                   className="bg-white"
                   onClick={() => {
-                    const nextLead = updateEkgxLead(lead.id, {
-                      status: "not_contacted",
-                      lastContactAt: null,
-                      lastContactSummary: null,
-                    });
-                    if (!nextLead) return;
-                    setLead(nextLead);
-                    setContactSummary("");
-                    toast({ title: "Lead reset to not contacted" });
+                    updateLeadMutation.mutate(
+                      {
+                        status: "not_contacted",
+                        lastContactAt: null,
+                        lastContactSummary: null,
+                      },
+                      {
+                        onSuccess: () => {
+                          setContactSummary("");
+                          toast({ title: "Lead reset to not contacted" });
+                        },
+                      },
+                    );
                   }}
                 >
                   Mark Not Contacted
