@@ -688,6 +688,58 @@ router.patch("/customers/:id", async (req, res): Promise<void> => {
   res.json({ ok: true });
 });
 
+router.delete("/customers/:id", async (req, res): Promise<void> => {
+  const user = await requireAuthenticatedUser(req, res);
+  if (!user) return;
+
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Invalid customer id" });
+    return;
+  }
+
+  const [customer] = await db
+    .select({
+      id: customersTable.id,
+      name: customersTable.name,
+      status: customersTable.status,
+    })
+    .from(customersTable)
+    .where(eq(customersTable.id, id));
+
+  if (!customer) {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+
+  if (customer.status !== "prospect") {
+    res.status(409).json({ error: "Only prospects can be deleted from this workspace." });
+    return;
+  }
+
+  const [orderUsage] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(ordersTable)
+    .where(eq(ordersTable.customerId, id));
+  const [invoiceUsage] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(invoicesTable)
+    .where(eq(invoicesTable.customerId, id));
+
+  if (Number(orderUsage?.count ?? 0) > 0 || Number(invoiceUsage?.count ?? 0) > 0) {
+    res.status(409).json({ error: "This prospect cannot be deleted because it already has order or invoice history." });
+    return;
+  }
+
+  await db.delete(customerContactsTable).where(eq(customerContactsTable.customerId, id));
+  await db.delete(customerActivitiesTable).where(eq(customerActivitiesTable.customerId, id));
+  await db.delete(customersTable).where(eq(customersTable.id, id));
+
+  res.status(204).send();
+});
+
 router.post("/customers/:id/activities", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);

@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  EyeOff,
   Plus,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -41,6 +43,7 @@ import {
 } from "@/lib/collaboration";
 import {
   createCustomerActivity,
+  deleteCustomer,
   getCustomers,
   getSalesReps,
   type CustomerListItem,
@@ -74,6 +77,8 @@ type OpportunityContactMeta = {
 };
 
 const CONTACT_LOG_NOTE_PREFIX = "contact-log:";
+const DASHBOARD_SNOOZE_STORAGE_KEY = "sales-app.workspace-dashboard-snoozes";
+const DASHBOARD_SNOOZE_UPDATED_EVENT = "sales-app:workspace-dashboard-snoozes-updated";
 const OPPORTUNITY_ACTION_OPTIONS = [
   { value: "call", label: "Call" },
   { value: "email", label: "Email" },
@@ -81,6 +86,8 @@ const OPPORTUNITY_ACTION_OPTIONS = [
   { value: "follow_up", label: "Follow Up" },
   { value: "other", label: "Other" },
 ] as const;
+
+type DashboardSnoozeMap = Record<string, string>;
 
 type PipelineItem = {
   key: string;
@@ -96,8 +103,11 @@ type PipelineItem = {
   lastContactNote: string | null;
   lastContactMeta: OpportunityContactMeta | null;
   detail: string;
+  snoozedUntil: string | null;
   opportunity?: SalesOpportunity;
 };
+
+type SnoozeTarget = Pick<PipelineItem, "key" | "kind" | "title" | "companyName">;
 
 function getStageLabel(customer: CustomerListItem) {
   if (customer.email && customer.phone) {
@@ -301,6 +311,58 @@ function sortByCreatedAtDesc<T extends { createdAt?: string }>(items: T[]) {
   });
 }
 
+function readDashboardSnoozes(): DashboardSnoozeMap {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const stored = window.localStorage.getItem(DASHBOARD_SNOOZE_STORAGE_KEY);
+  if (!stored) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveDashboardSnoozes(snoozes: DashboardSnoozeMap) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(DASHBOARD_SNOOZE_STORAGE_KEY, JSON.stringify(snoozes));
+  window.dispatchEvent(new CustomEvent(DASHBOARD_SNOOZE_UPDATED_EVENT));
+}
+
+function formatActionDate(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 function getWorkspaceCustomerHref(customerId: number) {
   return `/customers/${customerId}?from=sales-hub`;
 }
@@ -309,6 +371,10 @@ function getTodayDateValue() {
   const now = new Date();
   const offset = now.getTimezoneOffset();
   return new Date(now.getTime() - offset * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function isSnoozedUntilFuture(dateValue: string | null, today: string) {
+  return Boolean(dateValue && dateValue > today);
 }
 
 function addDays(dateValue: string, days: number) {
@@ -337,7 +403,6 @@ function getDueMeta(dueDate: string | null) {
 
   return { dueType: "upcoming" as const, dueLabel: "This week" };
 }
-
 function getLastContactSortValue(value: string | null) {
   if (!value) {
     return 0;
@@ -393,10 +458,15 @@ export default function SalesWorkspace() {
   );
   const [actionPointView, setActionPointView] = useState<"open" | "completed">("open");
   const [taskView, setTaskView] = useState<"open" | "completed">("open");
+  const [opportunityView, setOpportunityView] = useState<"open" | "snoozed">("open");
+  const [prospectView, setProspectView] = useState<"open" | "snoozed">("open");
   const [actionPointOpen, setActionPointOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [contactLogOpen, setContactLogOpen] = useState(false);
   const [contactDetailOpen, setContactDetailOpen] = useState(false);
+  const [dashboardSnoozes, setDashboardSnoozes] = useState<DashboardSnoozeMap>(() => readDashboardSnoozes());
+  const [snoozeTarget, setSnoozeTarget] = useState<SnoozeTarget | null>(null);
+  const [snoozeDate, setSnoozeDate] = useState("");
   const [selectedOpportunity, setSelectedOpportunity] = useState<SalesOpportunity | null>(null);
   const [selectedContactMeta, setSelectedContactMeta] = useState<{
     opportunity: SalesOpportunity;
@@ -542,10 +612,25 @@ export default function SalesWorkspace() {
       toast({ title: "Unable to add task", description: error.message, variant: "destructive" }),
   });
 
+  const deleteProspectMutation = useMutation({
+    mutationFn: (customerId: number) => deleteCustomer(customerId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["customers-crm", "sales-workspace"] }),
+        queryClient.invalidateQueries({ queryKey: ["customers-crm"] }),
+        queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
+      ]);
+      toast({ title: "Prospect deleted" });
+    },
+    onError: (error: Error) =>
+      toast({ title: "Unable to delete prospect", description: error.message, variant: "destructive" }),
+  });
+
   const openActionPoints = actionPoints.filter((item) => !item.completed);
   const completedActionPoints = actionPoints.filter((item) => item.completed);
   const openTasks = personalTasks.filter((task) => !task.completed);
   const completedTasks = personalTasks.filter((task) => task.completed);
+  const todayDateValue = getTodayDateValue();
   const opportunityItems = useMemo<PipelineItem[]>(
     () =>
       openOpportunities.map((opportunity) => {
@@ -568,10 +653,11 @@ export default function SalesWorkspace() {
             : null,
           lastContactMeta,
           detail: opportunity.notes ?? "",
+          snoozedUntil: dashboardSnoozes[`opportunity:${opportunity.id}`] ?? null,
           opportunity,
         };
       }),
-    [openOpportunities],
+    [dashboardSnoozes, openOpportunities],
   );
   const prospectItems = useMemo<PipelineItem[]>(
     () =>
@@ -594,9 +680,36 @@ export default function SalesWorkspace() {
               : "No contact details captured yet",
           lastContactMeta: null,
           detail: "",
+          snoozedUntil: dashboardSnoozes[`prospect:${customer.id}`] ?? null,
         };
       }),
-    [prospects],
+    [dashboardSnoozes, prospects],
+  );
+  const activeOpportunityItems = useMemo(
+    () => opportunityItems.filter((item) => !isSnoozedUntilFuture(item.snoozedUntil, todayDateValue)),
+    [opportunityItems, todayDateValue],
+  );
+  const snoozedOpportunityItems = useMemo(
+    () =>
+      opportunityItems
+        .filter((item) => isSnoozedUntilFuture(item.snoozedUntil, todayDateValue))
+        .sort((left, right) =>
+          left.snoozedUntil && right.snoozedUntil ? left.snoozedUntil.localeCompare(right.snoozedUntil) : 0,
+        ),
+    [opportunityItems, todayDateValue],
+  );
+  const activeProspectItems = useMemo(
+    () => prospectItems.filter((item) => !isSnoozedUntilFuture(item.snoozedUntil, todayDateValue)),
+    [prospectItems, todayDateValue],
+  );
+  const snoozedProspectItems = useMemo(
+    () =>
+      prospectItems
+        .filter((item) => isSnoozedUntilFuture(item.snoozedUntil, todayDateValue))
+        .sort((left, right) =>
+          left.snoozedUntil && right.snoozedUntil ? left.snoozedUntil.localeCompare(right.snoozedUntil) : 0,
+        ),
+    [prospectItems, todayDateValue],
   );
   const dashboardMetrics = {
     dueToday: openActionPoints.filter((item) => getDueMeta(item.dueDate).dueType === "today").length,
@@ -660,6 +773,38 @@ export default function SalesWorkspace() {
     setContactLogOpen(true);
   }
 
+  function handleOpenSnoozeDialog(item: PipelineItem) {
+    setSnoozeTarget({
+      key: item.key,
+      kind: item.kind,
+      title: item.title,
+      companyName: item.companyName,
+    });
+    setSnoozeDate(item.snoozedUntil ?? todayDateValue);
+  }
+
+  function handleSaveSnooze() {
+    if (!snoozeTarget || !snoozeDate) {
+      return;
+    }
+
+    const next = {
+      ...dashboardSnoozes,
+      [snoozeTarget.key]: snoozeDate,
+    };
+    setDashboardSnoozes(next);
+    saveDashboardSnoozes(next);
+    setSnoozeTarget(null);
+    setSnoozeDate("");
+  }
+
+  function handleUnsnooze(itemKey: string) {
+    const next = { ...dashboardSnoozes };
+    delete next[itemKey];
+    setDashboardSnoozes(next);
+    saveDashboardSnoozes(next);
+  }
+
   function handleLogContact() {
     if (!selectedOpportunity) {
       return;
@@ -686,100 +831,17 @@ export default function SalesWorkspace() {
     navigate(getWorkspaceCustomerHref(customerId));
   }
 
-  function renderPipelineTable(items: PipelineItem[], emptyMessage: string) {
-    if (items.length === 0) {
-      return (
-        <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-          {emptyMessage}
-        </div>
-      );
+  function handleDeleteProspect(item: PipelineItem) {
+    if (item.kind !== "prospect") {
+      return;
     }
 
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-            <tr>
-              <th className="px-4 py-2.5 font-semibold">Company</th>
-              <th className="px-4 py-2.5 font-semibold">Contact</th>
-              <th className="px-4 py-2.5 font-semibold">Opportunity</th>
-              <th className="px-4 py-2.5 font-semibold">Last Contact</th>
-              <th className="px-4 py-2.5 font-semibold">Status</th>
-              <th className="px-4 py-2.5 font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.key} className="group border-t border-slate-200 transition hover:bg-slate-50/80">
-                <td className="px-4 py-2.5 align-top">
-                  <button type="button" className="text-left" onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}>
-                    <div className="font-semibold text-slate-950 transition group-hover:text-sky-800">{item.companyName}</div>
-                  </button>
-                </td>
-                <td className="px-4 py-2.5 align-top text-slate-700">{item.contactName || "No contact yet"}</td>
-                <td className="px-4 py-2.5 align-top text-slate-700">
-                  <div className="font-medium text-sky-700">{item.subtitle}</div>
-                  {item.detail ? <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.detail}</div> : null}
-                </td>
-                <td className="px-4 py-2.5 align-top text-slate-700">
-                  <div className="min-w-[170px]">
-                    <div className="font-medium text-slate-800">{item.lastContactLabel}</div>
-                    {item.lastContactNote ? <div className="mt-0.5 text-xs text-slate-500">{item.lastContactNote}</div> : null}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 align-top">
-                  <Badge variant="outline" className={cn("border", item.statusClassName)}>
-                    {item.statusLabel}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2.5 align-top">
-                  <div className="flex min-w-[220px] items-start gap-2">
-                    <Button
-                      variant="outline"
-                      className="h-8 rounded-xl px-3 text-xs"
-                      onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
-                    >
-                      Open
-                    </Button>
-                    {item.opportunity ? (
-                      <>
-                        {item.lastContactMeta ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="h-8 rounded-xl px-3 text-xs text-sky-700 hover:text-sky-800"
-                            onClick={() => handleOpenContactDetail(item.opportunity!, item.lastContactMeta!)}
-                          >
-                            View
-                          </Button>
-                        ) : null}
-                        <Select
-                          key={`${item.key}-${item.statusLabel}`}
-                          onValueChange={(value: OpportunityActionType) => {
-                            handleChooseOpportunityAction(item.opportunity!, value);
-                          }}
-                        >
-                          <SelectTrigger className="h-8 w-[118px] rounded-xl bg-white text-xs">
-                            <SelectValue placeholder="Set status" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {OPPORTUNITY_ACTION_OPTIONS.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
+    const confirmed = window.confirm(`Delete prospect "${item.companyName}"? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    deleteProspectMutation.mutate(item.customerId);
   }
 
   return (
@@ -797,7 +859,7 @@ export default function SalesWorkspace() {
             </h1>
           </div>
           <p className="mt-1 hidden max-w-3xl text-sm text-slate-600 lg:block">
-            Work the pipeline from one queue and jump straight into the account when it is time to move.
+            Work the pipeline from one queue, snooze anything that should disappear until a future date, and jump straight into the account when it is time to move.
           </p>
         </div>
       )}
@@ -815,13 +877,137 @@ export default function SalesWorkspace() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-                    {opportunityItems.length} open
+                    {activeOpportunityItems.length} open
                   </Badge>
+                  <Tabs value={opportunityView} onValueChange={(value) => setOpportunityView(value as "open" | "snoozed")}>
+                    <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
+                      <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
+                      <TabsTrigger value="snoozed" className="rounded-lg">Snoozed</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="min-h-0 overflow-y-auto p-0">
-              {renderPipelineTable(opportunityItems, "No open opportunities need attention right now.")}
+              {opportunityView === "open" ? activeOpportunityItems.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[840px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                      <tr>
+                        <th className="px-5 py-3 font-semibold">Company</th>
+                        <th className="px-5 py-3 font-semibold">Contact</th>
+                        <th className="px-5 py-3 font-semibold">Opportunity</th>
+                        <th className="px-5 py-3 font-semibold">Last Contacted</th>
+                        <th className="px-5 py-3 font-semibold">Status</th>
+                        <th className="px-4 py-2.5 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeOpportunityItems.map((item) => (
+                        <tr key={item.key} className="group border-t border-slate-200 transition hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <button type="button" className="text-left" onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}>
+                              <div className="font-semibold text-slate-950 transition group-hover:text-sky-800">{item.companyName}</div>
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">{item.contactName}</td>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="font-medium text-sky-700">{item.subtitle}</div>
+                            {item.detail ? <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.detail}</div> : null}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="min-w-[170px]">
+                              <div className="font-medium text-slate-800">{item.lastContactLabel}</div>
+                              {item.lastContactNote ? (
+                                <div className="mt-0.5 text-xs text-slate-500">
+                                  {item.lastContactNote}
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {item.opportunity && item.lastContactMeta ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-7 rounded-lg px-2 text-xs text-sky-700 hover:text-sky-800"
+                                onClick={() => handleOpenContactDetail(item.opportunity!, item.lastContactMeta!)}
+                              >
+                                View
+                              </Button>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex min-w-[210px] flex-col gap-1.5">
+                              <Select
+                                key={`${item.key}-${item.statusLabel}`}
+                                onValueChange={(value: OpportunityActionType) => {
+                                  if (item.opportunity) {
+                                    handleChooseOpportunityAction(item.opportunity, value);
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8 rounded-xl bg-white text-xs">
+                                  <SelectValue placeholder="Set status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {OPPORTUNITY_ACTION_OPTIONS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                variant="ghost"
+                                className="h-8 justify-start rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700"
+                                onClick={() => handleOpenSnoozeDialog(item)}
+                              >
+                                <EyeOff className="mr-2 size-4" />
+                                Snooze
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+                  No open opportunities need attention right now.
+                </div>
+              ) : snoozedOpportunityItems.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-sm">
+                    <tbody>
+                      {snoozedOpportunityItems.map((item) => (
+                        <tr key={item.key} className="border-t border-slate-200 first:border-t-0">
+                          <td className="px-4 py-2.5">
+                            <div className="font-semibold text-slate-950">{item.companyName}</div>
+                            <div className="text-slate-500">{item.subtitle}</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">
+                                Snoozed until {formatActionDate(item.snoozedUntil ?? "")}
+                              </Badge>
+                              <Button variant="ghost" className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700" onClick={() => handleUnsnooze(item.key)}>
+                                <RotateCcw className="mr-2 size-4" />
+                                Unsnooze
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+                  No snoozed opportunities right now.
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -836,13 +1022,114 @@ export default function SalesWorkspace() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
-                    {prospectItems.length} prospects
+                    {activeProspectItems.length} prospects
                   </Badge>
+                  <Tabs value={prospectView} onValueChange={(value) => setProspectView(value as "open" | "snoozed")}>
+                    <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
+                      <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
+                      <TabsTrigger value="snoozed" className="rounded-lg">Snoozed</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="min-h-0 overflow-y-auto p-0">
-              {renderPipelineTable(prospectItems, "No prospects need attention right now.")}
+              {prospectView === "open" ? activeProspectItems.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                      <tr>
+                        <th className="px-4 py-2.5 font-semibold">Company</th>
+                        <th className="px-4 py-2.5 font-semibold">Contact</th>
+                        <th className="px-4 py-2.5 font-semibold">Opportunity</th>
+                        <th className="px-4 py-2.5 font-semibold">Last Contact</th>
+                        <th className="px-4 py-2.5 font-semibold">Status</th>
+                        <th className="px-4 py-2.5 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeProspectItems.map((item) => (
+                        <tr key={item.key} className="group border-t border-slate-200 transition hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <button type="button" className="text-left" onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}>
+                              <div className="font-semibold text-slate-950 transition group-hover:text-sky-800">{item.companyName}</div>
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">{item.contactName}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.subtitle}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.lastContactLabel}</td>
+                          <td className="px-4 py-3">
+                            <Badge variant="outline" className={cn("border", item.statusClassName)}>
+                              {item.statusLabel}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex min-w-[180px] gap-2">
+                              <Button
+                                variant="outline"
+                                className="h-8 rounded-xl px-3 text-xs"
+                                onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                              >
+                                Open
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                className="h-8 rounded-xl px-3 text-xs text-rose-600 hover:text-rose-700"
+                                onClick={() => handleDeleteProspect(item)}
+                                disabled={deleteProspectMutation.isPending}
+                              >
+                                Delete
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700"
+                                onClick={() => handleOpenSnoozeDialog(item)}
+                              >
+                                <EyeOff className="mr-2 size-4" />
+                                Snooze
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+                  No prospects need attention right now.
+                </div>
+              ) : snoozedProspectItems.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-sm">
+                    <tbody>
+                      {snoozedProspectItems.map((item) => (
+                        <tr key={item.key} className="border-t border-slate-200 first:border-t-0">
+                          <td className="px-4 py-2.5">
+                            <div className="font-semibold text-slate-950">{item.companyName}</div>
+                            <div className="text-slate-500">{item.subtitle}</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">
+                                Snoozed until {formatActionDate(item.snoozedUntil ?? "")}
+                              </Badge>
+                              <Button variant="ghost" className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700" onClick={() => handleUnsnooze(item.key)}>
+                                <RotateCcw className="mr-2 size-4" />
+                                Unsnooze
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+                  No snoozed prospects right now.
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -1328,6 +1615,49 @@ export default function SalesWorkspace() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setContactDetailOpen(false)}>
                 Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(snoozeTarget)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSnoozeTarget(null);
+              setSnoozeDate("");
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Snooze dashboard item</DialogTitle>
+              <DialogDescription>
+                Hide this {snoozeTarget?.kind ?? "pipeline"} item from the Daily Command Center until the selected date. It will automatically reappear on that day.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="font-semibold text-slate-950">{snoozeTarget?.title}</div>
+                <div className="mt-1 text-sm text-slate-600">{snoozeTarget?.companyName}</div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-900">Show it again on</label>
+                <Input type="date" value={snoozeDate} min={todayDateValue} onChange={(event) => setSnoozeDate(event.target.value)} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSnoozeTarget(null);
+                  setSnoozeDate("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleSaveSnooze} disabled={!snoozeDate}>
+                Save snooze
               </Button>
             </DialogFooter>
           </DialogContent>

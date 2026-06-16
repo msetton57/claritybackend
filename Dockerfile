@@ -9,6 +9,6 @@ COPY artifacts ./artifacts
 COPY lib ./lib
 COPY scripts ./scripts
 
-RUN pnpm install --frozen-lockfile --config.dangerously-allow-all-builds=true
+RUN pnpm install --frozen-lockfile --config.dangerously-allow-all-builds=truewh
 
 EXPOSE 5000 5173

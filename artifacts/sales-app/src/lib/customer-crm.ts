@@ -212,6 +212,12 @@ export async function getCustomerCrm(customerId: number) {
   return fetchJson<CustomerCrmDetail>(`/api/customers/${customerId}/crm`);
 }
 
+export async function deleteCustomer(customerId: number) {
+  return fetchJson<void>(`/api/customers/${customerId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getSalesReps() {
   return fetchJson<SalesRepOption[]>("/api/reps");
 }
