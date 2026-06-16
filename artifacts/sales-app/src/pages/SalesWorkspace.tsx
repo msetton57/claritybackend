@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
-  EyeOff,
   Plus,
   RotateCcw,
   Search,
@@ -46,7 +45,6 @@ import {
 } from "@/lib/collaboration";
 import {
   createCustomerActivity,
-  deleteCustomer,
   getCustomers,
   getSalesReps,
   type CustomerListItem,
@@ -82,6 +80,7 @@ type OpportunityContactMeta = {
 const CONTACT_LOG_NOTE_PREFIX = "contact-log:";
 const DASHBOARD_SNOOZE_STORAGE_KEY = "sales-app.workspace-dashboard-snoozes";
 const DASHBOARD_SNOOZE_UPDATED_EVENT = "sales-app:workspace-dashboard-snoozes-updated";
+const PROSPECT_CONTACT_LOG_STORAGE_KEY = "sales-app.workspace-prospect-contact-log";
 const OPPORTUNITY_ACTION_OPTIONS = [
   { value: "call", label: "Call" },
   { value: "email", label: "Email" },
@@ -108,6 +107,20 @@ type PipelineItem = {
   detail: string;
   snoozedUntil: string | null;
   opportunity?: SalesOpportunity;
+};
+
+type ContactLogTarget = {
+  customerId: number;
+  customerName: string;
+  title: string;
+  opportunity: SalesOpportunity | null;
+  prospectKey?: string;
+};
+
+type ContactDetailTarget = {
+  customerName: string;
+  title: string;
+  meta: OpportunityContactMeta;
 };
 
 type SnoozeTarget = Pick<PipelineItem, "key" | "kind" | "title" | "companyName">;
@@ -359,6 +372,46 @@ function saveDashboardSnoozes(snoozes: DashboardSnoozeMap) {
   window.dispatchEvent(new CustomEvent(DASHBOARD_SNOOZE_UPDATED_EVENT));
 }
 
+function readProspectContactLogMap(): Record<string, OpportunityContactMeta> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const stored = window.localStorage.getItem(PROSPECT_CONTACT_LOG_STORAGE_KEY);
+  if (!stored) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([key, value]) => {
+          if (!value || typeof value !== "object") {
+            return [key, null] as const;
+          }
+
+          return [key, parseContactMeta(serializeContactMeta(value as OpportunityContactMeta))] as const;
+        })
+        .filter((entry): entry is [string, OpportunityContactMeta] => Boolean(entry[1])),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveProspectContactLogMap(contactLogMap: Record<string, OpportunityContactMeta>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(PROSPECT_CONTACT_LOG_STORAGE_KEY, JSON.stringify(contactLogMap));
+}
+
 function formatActionDate(value: string) {
   if (!value) {
     return "";
@@ -480,13 +533,13 @@ export default function SalesWorkspace() {
   const [contactLogOpen, setContactLogOpen] = useState(false);
   const [contactDetailOpen, setContactDetailOpen] = useState(false);
   const [dashboardSnoozes, setDashboardSnoozes] = useState<DashboardSnoozeMap>(() => readDashboardSnoozes());
+  const [prospectContactLogMap, setProspectContactLogMap] = useState<Record<string, OpportunityContactMeta>>(
+    () => readProspectContactLogMap(),
+  );
   const [snoozeTarget, setSnoozeTarget] = useState<SnoozeTarget | null>(null);
   const [snoozeDate, setSnoozeDate] = useState("");
-  const [selectedOpportunity, setSelectedOpportunity] = useState<SalesOpportunity | null>(null);
-  const [selectedContactMeta, setSelectedContactMeta] = useState<{
-    opportunity: SalesOpportunity;
-    meta: OpportunityContactMeta;
-  } | null>(null);
+  const [contactLogTarget, setContactLogTarget] = useState<ContactLogTarget | null>(null);
+  const [selectedContactDetail, setSelectedContactDetail] = useState<ContactDetailTarget | null>(null);
   const [newActionPoint, setNewActionPoint] = useState({
     title: "",
     details: "",
@@ -503,24 +556,26 @@ export default function SalesWorkspace() {
   const [contactLogDetails, setContactLogDetails] = useState("");
   const logOpportunityContactMutation = useMutation({
     mutationFn: async ({
-      opportunity,
+      target,
       actionType,
       salesRepId,
       details,
     }: {
-      opportunity: SalesOpportunity;
+      target: ContactLogTarget;
       actionType: OpportunityActionType;
       salesRepId: string;
       details: string;
     }) => {
       const actionLabel = getActionLabel(actionType);
-      const subject = getOpportunitySubject(opportunity, actionLabel);
+      const subject = target.opportunity
+        ? getOpportunitySubject(target.opportunity, actionLabel)
+        : `${actionLabel} for ${target.customerName}`;
       const salesRep = salesReps.find((rep) => String(rep.id) === salesRepId);
       if (!salesRep) {
         throw new Error("Select a sales rep before saving.");
       }
 
-      const createdActivity = await createCustomerActivity(opportunity.customerId, {
+      const createdActivity = await createCustomerActivity(target.customerId, {
         activityType: getActivityTypeForAction(actionType),
         subject,
         details: details.trim() || null,
@@ -541,11 +596,20 @@ export default function SalesWorkspace() {
         subject,
       };
 
-      await updateOpportunity(opportunity.id, {
-        status: actionLabel,
-        lastContactedAt: createdActivity.createdAt,
-        lastContactNote: serializeContactMeta(meta),
-      });
+      if (target.opportunity) {
+        await updateOpportunity(target.opportunity.id, {
+          status: actionLabel,
+          lastContactedAt: createdActivity.createdAt,
+          lastContactNote: serializeContactMeta(meta),
+        });
+      } else if (target.prospectKey) {
+        const next = {
+          ...prospectContactLogMap,
+          [target.prospectKey]: meta,
+        };
+        setProspectContactLogMap(next);
+        saveProspectContactLogMap(next);
+      }
     },
     onSuccess: async () => {
       await Promise.all([
@@ -553,7 +617,7 @@ export default function SalesWorkspace() {
         queryClient.invalidateQueries({ queryKey: ["customers-crm"] }),
       ]);
       setContactLogOpen(false);
-      setSelectedOpportunity(null);
+      setContactLogTarget(null);
       setContactLogAction("call");
       setContactLogSalesRepId("");
       setContactLogDetails("");
@@ -626,20 +690,6 @@ export default function SalesWorkspace() {
     },
     onError: (error: Error) =>
       toast({ title: "Unable to add task", description: error.message, variant: "destructive" }),
-  });
-
-  const deleteProspectMutation = useMutation({
-    mutationFn: (customerId: number) => deleteCustomer(customerId),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["customers-crm", "sales-workspace"] }),
-        queryClient.invalidateQueries({ queryKey: ["customers-crm"] }),
-        queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
-      ]);
-      toast({ title: "Prospect deleted" });
-    },
-    onError: (error: Error) =>
-      toast({ title: "Unable to delete prospect", description: error.message, variant: "destructive" }),
   });
 
   const openActionPoints = actionPoints.filter((item) => !item.completed);
@@ -727,7 +777,8 @@ export default function SalesWorkspace() {
   const prospectItems = useMemo<PipelineItem[]>(
     () =>
       prospects.map((customer) => {
-        const label = getStageLabel(customer);
+        const lastContactMeta = prospectContactLogMap[`prospect:${customer.id}`] ?? null;
+        const label = lastContactMeta ? lastContactMeta.actionLabel : getStageLabel(customer);
         return {
           key: `prospect:${customer.id}`,
           kind: "prospect",
@@ -738,17 +789,20 @@ export default function SalesWorkspace() {
           contactName: customer.primaryContact,
           statusLabel: label,
           statusClassName: getOpportunityStatusClasses(label),
-          lastContactLabel: getLastContactLabel(customer),
-          lastContactNote:
-            customer.email || customer.phone
+          lastContactLabel: lastContactMeta
+            ? `${lastContactMeta.actionLabel} - ${getFirstName(lastContactMeta.salesRepName)}`
+            : getLastContactLabel(customer),
+          lastContactNote: lastContactMeta
+            ? formatContactTimestamp(lastContactMeta.createdAt)
+            : customer.email || customer.phone
               ? [customer.email, customer.phone].filter(Boolean).join(" • ")
               : "No contact details captured yet",
-          lastContactMeta: null,
+          lastContactMeta,
           detail: "",
           snoozedUntil: dashboardSnoozes[`prospect:${customer.id}`] ?? null,
         };
       }),
-    [dashboardSnoozes, prospects],
+    [dashboardSnoozes, prospectContactLogMap, prospects],
   );
   const activeOpportunityItems = useMemo(
     () => opportunityItems.filter((item) => !isSnoozedUntilFuture(item.snoozedUntil, todayDateValue)),
@@ -830,10 +884,16 @@ export default function SalesWorkspace() {
     });
   }
 
-  function handleChooseOpportunityAction(opportunity: SalesOpportunity, action: OpportunityActionType) {
-    setSelectedOpportunity(opportunity);
+  function handleChoosePipelineAction(item: PipelineItem, action: OpportunityActionType) {
+    setContactLogTarget({
+      customerId: item.customerId,
+      customerName: item.companyName,
+      title: item.subtitle,
+      opportunity: item.opportunity ?? null,
+      prospectKey: item.kind === "prospect" ? item.key : undefined,
+    });
     setContactLogAction(action);
-    setContactLogSalesRepId(getDefaultSalesRepId(opportunity, customers, salesReps));
+    setContactLogSalesRepId(getDefaultSalesRepId(item.opportunity ?? null, customers, salesReps));
     setContactLogDetails("");
     setContactLogOpen(true);
   }
@@ -871,7 +931,7 @@ export default function SalesWorkspace() {
   }
 
   function handleLogContact() {
-    if (!selectedOpportunity) {
+    if (!contactLogTarget) {
       return;
     }
 
@@ -880,33 +940,28 @@ export default function SalesWorkspace() {
     }
 
     logOpportunityContactMutation.mutate({
-      opportunity: selectedOpportunity,
+      target: contactLogTarget,
       actionType: contactLogAction,
       salesRepId: contactLogSalesRepId,
       details: contactLogDetails,
     });
   }
 
-  function handleOpenContactDetail(opportunity: SalesOpportunity, meta: OpportunityContactMeta) {
-    setSelectedContactMeta({ opportunity, meta });
+  function handleOpenContactDetail(item: PipelineItem) {
+    if (!item.lastContactMeta) {
+      return;
+    }
+
+    setSelectedContactDetail({
+      customerName: item.companyName,
+      title: item.subtitle,
+      meta: item.lastContactMeta,
+    });
     setContactDetailOpen(true);
   }
 
   function handleOpenCustomerFromWorkspace(customerId: number) {
     navigate(getWorkspaceCustomerHref(customerId));
-  }
-
-  function handleDeleteProspect(item: PipelineItem) {
-    if (item.kind !== "prospect") {
-      return;
-    }
-
-    const confirmed = window.confirm(`Delete prospect "${item.companyName}"? This cannot be undone.`);
-    if (!confirmed) {
-      return;
-    }
-
-    deleteProspectMutation.mutate(item.customerId);
   }
 
   return (
@@ -996,7 +1051,7 @@ export default function SalesWorkspace() {
                                 type="button"
                                 variant="ghost"
                                 className="h-7 rounded-lg px-2 text-xs text-sky-700 hover:text-sky-800"
-                                onClick={() => handleOpenContactDetail(item.opportunity!, item.lastContactMeta!)}
+                                onClick={() => handleOpenContactDetail(item)}
                               >
                                 View
                               </Button>
@@ -1007,9 +1062,7 @@ export default function SalesWorkspace() {
                               <Select
                                 key={`${item.key}-${item.statusLabel}`}
                                 onValueChange={(value: OpportunityActionType) => {
-                                  if (item.opportunity) {
-                                    handleChooseOpportunityAction(item.opportunity, value);
-                                  }
+                                  handleChoosePipelineAction(item, value);
                                 }}
                               >
                                 <SelectTrigger className="h-8 rounded-xl bg-white text-xs">
@@ -1079,7 +1132,7 @@ export default function SalesWorkspace() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
-                    {activeProspectItems.length} prospects
+                    {activeProspectItems.length} open
                   </Badge>
                   <Tabs value={prospectView} onValueChange={(value) => setProspectView(value as "open" | "snoozed")}>
                     <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
@@ -1093,14 +1146,14 @@ export default function SalesWorkspace() {
             <CardContent className="min-h-0 overflow-y-auto p-0">
               {prospectView === "open" ? activeProspectItems.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] text-sm">
+                  <table className="w-full min-w-[840px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
                       <tr>
-                        <th className="px-4 py-2.5 font-semibold">Company</th>
-                        <th className="px-4 py-2.5 font-semibold">Contact</th>
-                        <th className="px-4 py-2.5 font-semibold">Opportunity</th>
-                        <th className="px-4 py-2.5 font-semibold">Last Contact</th>
-                        <th className="px-4 py-2.5 font-semibold">Status</th>
+                        <th className="px-5 py-3 font-semibold">Company</th>
+                        <th className="px-5 py-3 font-semibold">Contact</th>
+                        <th className="px-5 py-3 font-semibold">Opportunity</th>
+                        <th className="px-5 py-3 font-semibold">Last Contacted</th>
+                        <th className="px-5 py-3 font-semibold">Status</th>
                         <th className="px-4 py-2.5 font-semibold">Actions</th>
                       </tr>
                     </thead>
@@ -1113,38 +1166,51 @@ export default function SalesWorkspace() {
                             </button>
                           </td>
                           <td className="px-4 py-3 text-slate-700">{item.contactName}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.subtitle}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.lastContactLabel}</td>
-                          <td className="px-4 py-3">
-                            <Badge variant="outline" className={cn("border", item.statusClassName)}>
-                              {item.statusLabel}
-                            </Badge>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="font-medium text-sky-700">{item.subtitle}</div>
+                            {item.detail ? <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.detail}</div> : null}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            <div className="min-w-[170px]">
+                              <div className="font-medium text-slate-800">{item.lastContactLabel}</div>
+                              {item.lastContactNote ? (
+                                <div className="mt-0.5 text-xs text-slate-500">
+                                  {item.lastContactNote}
+                                </div>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex min-w-[180px] gap-2">
+                            {item.lastContactMeta ? (
                               <Button
-                                variant="outline"
-                                className="h-8 rounded-xl px-3 text-xs"
-                                onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
-                              >
-                                Open
-                              </Button>
-                              <Button
+                                type="button"
                                 variant="ghost"
-                                className="h-8 rounded-xl px-3 text-xs text-rose-600 hover:text-rose-700"
-                                onClick={() => handleDeleteProspect(item)}
-                                disabled={deleteProspectMutation.isPending}
+                                className="h-7 rounded-lg px-2 text-xs text-sky-700 hover:text-sky-800"
+                                onClick={() => handleOpenContactDetail(item)}
                               >
-                                Delete
+                                View
                               </Button>
-                              <Button
-                                variant="ghost"
-                                className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700"
-                                onClick={() => handleOpenSnoozeDialog(item)}
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="min-w-[210px]">
+                              <Select
+                                key={`${item.key}-${item.statusLabel}`}
+                                onValueChange={(value: OpportunityActionType) => {
+                                  handleChoosePipelineAction(item, value);
+                                }}
                               >
-                                <EyeOff className="mr-2 size-4" />
-                                Snooze
-                              </Button>
+                                <SelectTrigger className="h-8 rounded-xl bg-white text-xs">
+                                  <SelectValue placeholder="Set status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {OPPORTUNITY_ACTION_OPTIONS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </div>
                           </td>
                         </tr>
@@ -1621,8 +1687,8 @@ export default function SalesWorkspace() {
             </DialogHeader>
             <div className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="font-semibold text-slate-950">{selectedOpportunity?.customerName}</div>
-                <div className="mt-1 text-sm text-slate-600">{selectedOpportunity?.title}</div>
+                <div className="font-semibold text-slate-950">{contactLogTarget?.customerName}</div>
+                <div className="mt-1 text-sm text-slate-600">{contactLogTarget?.title}</div>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-900">Action</label>
@@ -1687,7 +1753,7 @@ export default function SalesWorkspace() {
           onOpenChange={(open) => {
             setContactDetailOpen(open);
             if (!open) {
-              setSelectedContactMeta(null);
+              setSelectedContactDetail(null);
             }
           }}
         >
@@ -1700,29 +1766,29 @@ export default function SalesWorkspace() {
             </DialogHeader>
             <div className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="font-semibold text-slate-950">{selectedContactMeta?.opportunity.customerName}</div>
-                <div className="mt-1 text-sm text-slate-600">{selectedContactMeta?.opportunity.title}</div>
+                <div className="font-semibold text-slate-950">{selectedContactDetail?.customerName}</div>
+                <div className="mt-1 text-sm text-slate-600">{selectedContactDetail?.title}</div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Method</div>
-                  <div className="mt-1 font-medium text-slate-950">{selectedContactMeta?.meta.actionLabel ?? "N/A"}</div>
+                  <div className="mt-1 font-medium text-slate-950">{selectedContactDetail?.meta.actionLabel ?? "N/A"}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Sales rep</div>
-                  <div className="mt-1 font-medium text-slate-950">{selectedContactMeta?.meta.salesRepName ?? "N/A"}</div>
+                  <div className="mt-1 font-medium text-slate-950">{selectedContactDetail?.meta.salesRepName ?? "N/A"}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3 sm:col-span-2">
                   <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Timestamp</div>
                   <div className="mt-1 font-medium text-slate-950">
-                    {formatContactTimestamp(selectedContactMeta?.meta.createdAt ?? null)}
+                    {formatContactTimestamp(selectedContactDetail?.meta.createdAt ?? null)}
                   </div>
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
                 <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Notes</div>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                  {selectedContactMeta?.meta.details ?? "No additional notes were captured for this activity."}
+                  {selectedContactDetail?.meta.details ?? "No additional notes were captured for this activity."}
                 </p>
               </div>
             </div>
