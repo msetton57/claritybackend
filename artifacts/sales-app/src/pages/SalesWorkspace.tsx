@@ -9,6 +9,7 @@ import {
   EyeOff,
   Plus,
   RotateCcw,
+  Search,
   Trash2,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -23,7 +24,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -303,6 +306,16 @@ function getDueBadgeClasses(dueType: "today" | "tomorrow" | "upcoming" | "late")
   return "border-sky-200 bg-sky-50 text-sky-700";
 }
 
+function getActionPointAccountTypeLabel(status: CustomerListItem["status"] | WorkspaceActionPoint["customerStatus"]) {
+  return status === "prospect" ? "Prospect" : "Customer";
+}
+
+function getActionPointAccountTypeBadgeClasses(status: CustomerListItem["status"] | WorkspaceActionPoint["customerStatus"]) {
+  return status === "prospect"
+    ? "border-violet-200 bg-violet-50 text-violet-700"
+    : "border-sky-200 bg-sky-50 text-sky-700";
+}
+
 function sortByCreatedAtDesc<T extends { createdAt?: string }>(items: T[]) {
   return [...items].sort((left, right) => {
     const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
@@ -457,10 +470,12 @@ export default function SalesWorkspace() {
     [customers],
   );
   const [actionPointView, setActionPointView] = useState<"open" | "completed">("open");
+  const [actionPointSearch, setActionPointSearch] = useState("");
   const [taskView, setTaskView] = useState<"open" | "completed">("open");
   const [opportunityView, setOpportunityView] = useState<"open" | "snoozed">("open");
   const [prospectView, setProspectView] = useState<"open" | "snoozed">("open");
   const [actionPointOpen, setActionPointOpen] = useState(false);
+  const [actionPointTargetOpen, setActionPointTargetOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [contactLogOpen, setContactLogOpen] = useState(false);
   const [contactDetailOpen, setContactDetailOpen] = useState(false);
@@ -579,6 +594,7 @@ export default function SalesWorkspace() {
         customerId: "",
         dueDate: getTodayDateValue(),
       });
+      setActionPointTargetOpen(false);
       setActionPointOpen(false);
       toast({ title: "Action point added" });
     },
@@ -631,6 +647,55 @@ export default function SalesWorkspace() {
   const openTasks = visibleTasks.filter((task) => !task.completed);
   const completedTasks = visibleTasks.filter((task) => task.completed);
   const todayDateValue = getTodayDateValue();
+  const actionPointTargets = useMemo(
+    () =>
+      [...customers].sort((left, right) => {
+        if (left.status === "prospect" && right.status !== "prospect") return -1;
+        if (left.status !== "prospect" && right.status === "prospect") return 1;
+        return (left.companyName || left.name).localeCompare(right.companyName || right.name);
+      }),
+    [customers],
+  );
+  const selectedActionPointTarget = actionPointTargets.find((entry) => String(entry.id) === newActionPoint.customerId) ?? null;
+  const normalizedActionPointSearch = actionPointSearch.trim().toLowerCase();
+  const visibleOpenActionPoints = useMemo(
+    () =>
+      openActionPoints.filter((item) => {
+        if (!normalizedActionPointSearch) {
+          return true;
+        }
+
+        return [
+          item.title,
+          item.details,
+          item.customerName,
+          getActionPointAccountTypeLabel(item.customerStatus),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedActionPointSearch);
+      }),
+    [normalizedActionPointSearch, openActionPoints],
+  );
+  const visibleCompletedActionPoints = useMemo(
+    () =>
+      completedActionPoints.filter((item) => {
+        if (!normalizedActionPointSearch) {
+          return true;
+        }
+
+        return [
+          item.title,
+          item.details,
+          item.customerName,
+          getActionPointAccountTypeLabel(item.customerStatus),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedActionPointSearch);
+      }),
+    [completedActionPoints, normalizedActionPointSearch],
+  );
   const opportunityItems = useMemo<PipelineItem[]>(
     () =>
       openOpportunities.map((opportunity) => {
@@ -1147,11 +1212,21 @@ export default function SalesWorkspace() {
                     </Button>
                   </div>
                 </div>
+                <div className="relative mt-4 max-w-sm">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    type="search"
+                    value={actionPointSearch}
+                    onChange={(event) => setActionPointSearch(event.target.value)}
+                    placeholder="Search action points, customers, or prospects"
+                    className="h-10 rounded-xl bg-white pl-9"
+                  />
+                </div>
               </CardHeader>
               <CardContent className="min-h-0 space-y-2 overflow-y-auto p-4">
                 {actionPointView === "open" ? (
-                  openActionPoints.length > 0 ? (
-                    openActionPoints.map((item) => {
+                  visibleOpenActionPoints.length > 0 ? (
+                    visibleOpenActionPoints.map((item) => {
                       const dueMeta = getDueMeta(item.dueDate);
                       return (
                       <div
@@ -1187,15 +1262,23 @@ export default function SalesWorkspace() {
                                 >
                                   {item.title}
                                 </div>
-                                <div className="mt-1 text-sm text-slate-500">
-                                  Related customer:{" "}
-                                  <button
-                                    type="button"
-                                    className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
-                                    onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                                  <Badge
+                                    variant="outline"
+                                    className={cn("text-[11px]", getActionPointAccountTypeBadgeClasses(item.customerStatus))}
                                   >
-                                    {item.customerName}
-                                  </button>
+                                    {getActionPointAccountTypeLabel(item.customerStatus)}
+                                  </Badge>
+                                  <span>
+                                    Related {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}:{" "}
+                                    <button
+                                      type="button"
+                                      className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
+                                      onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                                    >
+                                      {item.customerName}
+                                    </button>
+                                  </span>
                                 </div>
                                 {item.details ? <p className="mt-2 text-xs leading-5 text-slate-600">{item.details}</p> : null}
                               </div>
@@ -1211,7 +1294,7 @@ export default function SalesWorkspace() {
                               className="rounded-xl"
                               onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
                             >
-                              Open customer
+                              Open {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}
                               <ArrowUpRight className="ml-2 size-4" />
                             </Button>
                           </div>
@@ -1221,10 +1304,10 @@ export default function SalesWorkspace() {
                     })
                   ) : (
                     <div className="rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                      No open action points right now. Use the add action point button to create one tied to a customer.
+                      No open action points match right now. Use the add action point button to create one tied to a customer or prospect.
                     </div>
                   )
-                ) : completedActionPoints.length > 0 ? (
+                ) : visibleCompletedActionPoints.length > 0 ? (
                   <>
                     <div className="flex justify-end">
                       <Button
@@ -1237,7 +1320,7 @@ export default function SalesWorkspace() {
                         Clear completed
                       </Button>
                     </div>
-                    {completedActionPoints.map((item) => {
+                    {visibleCompletedActionPoints.map((item) => {
                       const dueMeta = getDueMeta(item.dueDate);
                       return (
                       <div key={item.id} className="rounded-[1.15rem] border border-slate-200 bg-white p-3">
@@ -1254,15 +1337,23 @@ export default function SalesWorkspace() {
                               </button>
                               <div className="min-w-0">
                                 <div className="font-semibold text-slate-500 line-through">{item.title}</div>
-                                <div className="mt-1 text-sm text-slate-500">
-                                  Related customer:{" "}
-                                  <button
-                                    type="button"
-                                    className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
-                                    onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                                  <Badge
+                                    variant="outline"
+                                    className={cn("text-[11px]", getActionPointAccountTypeBadgeClasses(item.customerStatus))}
                                   >
-                                    {item.customerName}
-                                  </button>
+                                    {getActionPointAccountTypeLabel(item.customerStatus)}
+                                  </Badge>
+                                  <span>
+                                    Related {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}:{" "}
+                                    <button
+                                      type="button"
+                                      className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
+                                      onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                                    >
+                                      {item.customerName}
+                                    </button>
+                                  </span>
                                 </div>
                                 {item.details ? <p className="mt-2 text-xs leading-5 text-slate-600">{item.details}</p> : null}
                               </div>
@@ -1278,7 +1369,7 @@ export default function SalesWorkspace() {
                               className="rounded-xl"
                               onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
                             >
-                              Open customer
+                              Open {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}
                               <ArrowUpRight className="ml-2 size-4" />
                             </Button>
                           </div>
@@ -1378,7 +1469,7 @@ export default function SalesWorkspace() {
             <DialogHeader>
               <DialogTitle>Add action point</DialogTitle>
               <DialogDescription>
-                Create a follow-up tied to a customer so the rep can jump straight into the account.
+                Create a follow-up tied to a customer or prospect so the rep can jump straight into the account.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -1391,22 +1482,53 @@ export default function SalesWorkspace() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Related customer</label>
-                <Select
-                  value={newActionPoint.customerId}
-                  onValueChange={(value) => setNewActionPoint((current) => ({ ...current, customerId: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((customer) => (
-                      <SelectItem key={customer.id} value={String(customer.id)}>
-                        {customer.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <label className="text-sm font-medium text-slate-900">Related customer or prospect</label>
+                <Popover open={actionPointTargetOpen} onOpenChange={setActionPointTargetOpen}>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" role="combobox" className="w-full justify-between overflow-hidden">
+                      <span className="truncate">
+                        {selectedActionPointTarget
+                          ? `${selectedActionPointTarget.companyName || selectedActionPointTarget.name} · ${getActionPointAccountTypeLabel(selectedActionPointTarget.status)}`
+                          : "Search customers or prospects"}
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[min(32rem,var(--radix-popover-trigger-width))] p-0">
+                    <Command>
+                      <CommandInput placeholder="Search customers or prospects..." />
+                      <CommandList className="max-h-72">
+                        <CommandEmpty>No matching customers or prospects.</CommandEmpty>
+                        {actionPointTargets.map((customer) => (
+                          <CommandItem
+                            key={customer.id}
+                            value={[
+                              customer.companyName,
+                              customer.name,
+                              customer.primaryContact,
+                              customer.email ?? "",
+                              getActionPointAccountTypeLabel(customer.status),
+                            ].join(" ")}
+                            onSelect={() => {
+                              setNewActionPoint((current) => ({ ...current, customerId: String(customer.id) }));
+                              setActionPointTargetOpen(false);
+                            }}
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-slate-900">
+                                {customer.companyName || customer.name}
+                              </div>
+                              <div className="truncate text-xs text-slate-500">
+                                {[customer.name, customer.primaryContact, getActionPointAccountTypeLabel(customer.status)]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </div>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-900">Due date</label>

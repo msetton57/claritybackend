@@ -23,6 +23,7 @@ export interface WorkspaceActionPoint {
   id: number;
   customerId: number;
   customerName: string;
+  customerStatus: "active" | "prospect" | "on_hold" | "inactive";
   title: string;
   details: string;
   dueDate: string | null;

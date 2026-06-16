@@ -66,12 +66,13 @@ function formatEkgxLead(lead: typeof ekgxLeadsTable.$inferSelect) {
 }
 
 function formatActionPoint(
-  row: typeof workspaceActionPointsTable.$inferSelect & { customerName: string },
+  row: typeof workspaceActionPointsTable.$inferSelect & { customerName: string; customerStatus: string },
 ) {
   return {
     id: row.id,
     customerId: row.customerId,
     customerName: row.customerName,
+    customerStatus: row.customerStatus as "active" | "prospect" | "on_hold" | "inactive",
     title: row.title,
     details: row.details,
     dueDate: row.dueDate ?? null,
@@ -218,6 +219,7 @@ router.get("/crm/action-points", async (req, res): Promise<void> => {
       createdAt: workspaceActionPointsTable.createdAt,
       updatedAt: workspaceActionPointsTable.updatedAt,
       customerName: customersTable.name,
+      customerStatus: customersTable.status,
     })
     .from(workspaceActionPointsTable)
     .innerJoin(customersTable, eq(workspaceActionPointsTable.customerId, customersTable.id))
@@ -237,7 +239,7 @@ router.post("/crm/action-points", async (req, res): Promise<void> => {
   }
 
   const [customer] = await db
-    .select({ id: customersTable.id, name: customersTable.name })
+    .select({ id: customersTable.id, name: customersTable.name, status: customersTable.status })
     .from(customersTable)
     .where(eq(customersTable.id, parsed.data.customerId));
 
@@ -256,7 +258,7 @@ router.post("/crm/action-points", async (req, res): Promise<void> => {
     })
     .returning();
 
-  res.status(201).json(formatActionPoint({ ...created, customerName: customer.name }));
+  res.status(201).json(formatActionPoint({ ...created, customerName: customer.name, customerStatus: customer.status }));
 });
 
 router.patch("/crm/action-points/:id", async (req, res): Promise<void> => {
@@ -285,11 +287,17 @@ router.patch("/crm/action-points/:id", async (req, res): Promise<void> => {
   }
 
   const [customer] = await db
-    .select({ name: customersTable.name })
+    .select({ name: customersTable.name, status: customersTable.status })
     .from(customersTable)
     .where(eq(customersTable.id, updated.customerId));
 
-  res.json(formatActionPoint({ ...updated, customerName: customer?.name ?? "Unknown customer" }));
+  res.json(
+    formatActionPoint({
+      ...updated,
+      customerName: customer?.name ?? "Unknown customer",
+      customerStatus: customer?.status ?? "active",
+    }),
+  );
 });
 
 router.delete("/crm/action-points/completed", async (req, res): Promise<void> => {
