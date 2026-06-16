@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { authSessionsTable, db, salesRepsTable, usersTable } from "@workspace/db";
-import { requireAdmin, requireAuthenticatedUser } from "../lib/auth";
+import { hashPassword, requireAdmin, requireAuthenticatedUser } from "../lib/auth";
 
 const router = Router();
 
@@ -23,18 +23,9 @@ const userBodySchema = z.object({
   phone: nullableTextField,
   title: z.string().trim().min(2).max(120),
   status: z.enum(["active", "inactive"]).default("active"),
-  pin: z
-    .union([z.string(), z.undefined()])
-    .transform((value) => value?.trim() ?? "")
-    .refine(
-      (value) => value.length === 0 || /^\d{4,8}$/.test(value),
-      "PIN must be 4 to 8 digits",
-    ),
 });
 
-const pinResetSchema = z.object({
-  pin: z.string().trim().regex(/^\d{4,8}$/, "PIN must be 4 to 8 digits"),
-});
+const INITIAL_PIN = "2468";
 
 function formatUser(user: typeof usersTable.$inferSelect) {
   return {
@@ -46,6 +37,8 @@ function formatUser(user: typeof usersTable.$inferSelect) {
     title: user.title,
     role: user.role,
     status: user.status,
+    authMode: user.passwordResetRequired ? "setup_required" : "password",
+    passwordResetRequired: user.passwordResetRequired,
     lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     createdAt: user.createdAt.toISOString(),
@@ -98,8 +91,6 @@ router.post("/users", async (req, res): Promise<void> => {
   }
 
   const user = await db.transaction(async (tx) => {
-    const loginPin = parsed.data.pin || "2468";
-
     const [salesRep] = await tx
       .insert(salesRepsTable)
       .values({ name: parsed.data.name, email: parsed.data.email })
@@ -112,7 +103,8 @@ router.post("/users", async (req, res): Promise<void> => {
         name: parsed.data.name,
         email: parsed.data.email,
         phone: parsed.data.phone,
-        loginPin,
+        passwordHash: hashPassword(INITIAL_PIN),
+        passwordResetRequired: true,
         title: parsed.data.title,
         role: "sales_rep",
         status: parsed.data.status,
@@ -125,7 +117,7 @@ router.post("/users", async (req, res): Promise<void> => {
 
   res.status(201).json({
     ...formatUser(user),
-    temporaryPin: parsed.data.pin || "2468",
+    temporaryPin: INITIAL_PIN,
   });
 });
 
@@ -206,7 +198,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
   res.json(formatUser(updatedUser));
 });
 
-router.post("/users/:id/reset-pin", async (req, res): Promise<void> => {
+router.post("/users/:id/reset-password", async (req, res): Promise<void> => {
   const currentUser = await requireAdmin(req, res);
   if (!currentUser) return;
 
@@ -214,14 +206,6 @@ router.post("/users/:id/reset-pin", async (req, res): Promise<void> => {
 
   if (!Number.isInteger(userId) || userId <= 0) {
     return void res.status(400).json({ error: "Invalid user id" });
-  }
-
-  const parsed = pinResetSchema.safeParse(req.body);
-
-  if (!parsed.success) {
-    return void res
-      .status(400)
-      .json({ error: parsed.error.issues[0]?.message ?? "Invalid PIN" });
   }
 
   const [targetUser] = await db
@@ -234,18 +218,27 @@ router.post("/users/:id/reset-pin", async (req, res): Promise<void> => {
     return void res.status(404).json({ error: "User not found" });
   }
 
-  const [updatedUser] = await db
-    .update(usersTable)
-    .set({
-      loginPin: parsed.data.pin,
-      updatedAt: new Date(),
-    })
-    .where(eq(usersTable.id, userId))
-    .returning();
+  const [updatedUser] = await db.transaction(async (tx) => {
+    await tx
+      .delete(authSessionsTable)
+      .where(eq(authSessionsTable.userId, userId));
+
+    const [updated] = await tx
+      .update(usersTable)
+      .set({
+        passwordHash: hashPassword(INITIAL_PIN),
+        passwordResetRequired: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(usersTable.id, userId))
+      .returning();
+
+    return [updated] as const;
+  });
 
   res.json({
     ...formatUser(updatedUser),
-    temporaryPin: parsed.data.pin,
+    temporaryPin: INITIAL_PIN,
   });
 });
 

@@ -24,6 +24,7 @@ import DataImports from "@/pages/DataImports";
 import SharedWorkspace from "@/pages/SharedWorkspace";
 import UserManagement from "@/pages/UserManagement";
 import Login from "@/pages/Login";
+import SetupPassword from "@/pages/SetupPassword";
 import PosterBoard from "@/pages/PosterBoard";
 import SalesWorkspace from "@/pages/SalesWorkspace";
 
@@ -53,6 +54,7 @@ function Router() {
       <Route path="/board" component={PosterBoard} />
       <Route path="/admin/users" component={UserManagement} />
       <Route path="/login" component={Login} />
+      <Route path="/setup-password" component={SetupPassword} />
       <Route path="/orders" component={OrdersHome} />
       <Route path="/orders/new" component={NewOrder} />
       <Route path="/orders/:id" component={OrderDetail} />

@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   pgTable,
   serial,
@@ -20,7 +21,8 @@ export const usersTable = pgTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     phone: text("phone"),
-    loginPin: text("login_pin").notNull().default("2468"),
+    passwordHash: text("password_hash").notNull(),
+    passwordResetRequired: boolean("password_reset_required").notNull().default(true),
     title: text("title").notNull().default("Sales Representative"),
     role: text("role").notNull().default("sales_rep"),
     status: text("status").notNull().default("active"),

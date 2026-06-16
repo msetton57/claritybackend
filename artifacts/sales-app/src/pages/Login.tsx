@@ -22,25 +22,25 @@ export default function Login() {
   });
   const loginMutation = useLogin();
   const [email, setEmail] = useState("morris.setton@clarity.local");
-  const [pin, setPin] = useState("2468");
+  const [password, setPassword] = useState("2468");
 
   useEffect(() => {
     if (session?.user) {
-      setLocation("/");
+      setLocation(session.user.passwordResetRequired ? "/setup-password" : "/");
     }
-  }, [session?.user, setLocation]);
+  }, [session?.user, setLocation, session?.user?.passwordResetRequired]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     try {
-      await loginMutation.mutateAsync({ email, pin });
-      setLocation("/");
+      const nextSession = await loginMutation.mutateAsync({ email, password });
+      setLocation(nextSession.user.passwordResetRequired ? "/setup-password" : "/");
     } catch (error) {
       toast({
         title: "Login failed",
         description:
-          error instanceof ApiError ? error.message : "Please check the email and PIN.",
+          error instanceof ApiError ? error.message : "Please check the email and password.",
         variant: "destructive",
       });
     }
@@ -83,8 +83,8 @@ export default function Login() {
             <Card className="border-emerald-200/70 bg-emerald-50/80 shadow-none">
               <CardContent className="p-5">
                 <KeyRound className="size-5 text-emerald-700" />
-                <div className="mt-3 text-sm font-medium text-slate-900">PIN-based access</div>
-                <p className="mt-1 text-sm text-slate-600">Admins can create reps and issue their PINs without changing the login flow.</p>
+                <div className="mt-3 text-sm font-medium text-slate-900">Personal passwords</div>
+                <p className="mt-1 text-sm text-slate-600">Admins issue the starter PIN, and each teammate sets their own password on first sign-in.</p>
               </CardContent>
             </Card>
           </div>
@@ -93,7 +93,7 @@ export default function Login() {
         <Card className="rounded-[2rem] border-white/70 bg-white/90 shadow-xl">
           <CardHeader>
             <CardTitle>Login</CardTitle>
-            <CardDescription>Select a teammate or sign in by email and PIN.</CardDescription>
+            <CardDescription>Select a teammate or sign in by email and password.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <form className="space-y-4" onSubmit={handleSubmit}>
@@ -108,14 +108,17 @@ export default function Login() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="login-pin">PIN</Label>
+                <Label htmlFor="login-pin">Password</Label>
                 <Input
                   id="login-pin"
                   type="password"
-                  value={pin}
-                  onChange={(event) => setPin(event.target.value)}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
                   placeholder="2468"
                 />
+                <p className="text-xs text-slate-500">
+                  Start with the temporary PIN `2468`, then set and confirm your own password.
+                </p>
               </div>
               <Button className="w-full" type="submit" disabled={loginMutation.isPending}>
                 {loginMutation.isPending ? "Signing in..." : "Sign in"}

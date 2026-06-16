@@ -7,17 +7,32 @@ import {
   createSessionForUser,
   destroySessionByToken,
   getCurrentUser,
+  hashPassword,
   requireAuthenticatedUser,
   setSessionCookie,
-  verifyLoginPin,
+  verifyPassword,
 } from "../lib/auth";
 
 const router = Router();
 
 const loginBodySchema = z.object({
   email: z.email().transform((value) => value.toLowerCase()),
-  pin: z.string().trim().min(4).max(32),
+  password: z.string().trim().min(4).max(72),
 });
+
+const setupPasswordSchema = z
+  .object({
+    password: z.string().trim().min(4).max(72),
+    confirmPassword: z.string().trim().min(4).max(72),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+function getAuthModeLabel(user: typeof usersTable.$inferSelect) {
+  return user.passwordResetRequired ? "setup_required" : "password";
+}
 
 function formatUser(user: typeof usersTable.$inferSelect) {
   return {
@@ -29,6 +44,8 @@ function formatUser(user: typeof usersTable.$inferSelect) {
     title: user.title,
     role: user.role,
     status: user.status,
+    authMode: getAuthModeLabel(user),
+    passwordResetRequired: user.passwordResetRequired,
     lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     createdAt: user.createdAt.toISOString(),
@@ -50,6 +67,7 @@ router.get("/auth/login-options", async (_req, res): Promise<void> => {
       email: user.email,
       title: user.title,
       role: user.role,
+      authMode: getAuthModeLabel(user),
     })),
   );
 });
@@ -69,23 +87,56 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     .where(eq(usersTable.email, parsed.data.email))
     .limit(1);
 
-  if (!user || user.status !== "active" || !verifyLoginPin(parsed.data.pin, user.loginPin)) {
-    return void res.status(401).json({ error: "Invalid email or PIN" });
+  if (!user || user.status !== "active" || !verifyPassword(parsed.data.password, user.passwordHash)) {
+    return void res.status(401).json({ error: "Invalid email or password" });
   }
 
+  const now = new Date();
   const { token } = await createSessionForUser(user.id);
 
   await db
     .update(usersTable)
     .set({
-      lastActiveAt: new Date(),
-      lastLoginAt: new Date(),
-      updatedAt: new Date(),
+      lastActiveAt: now,
+      lastLoginAt: now,
+      updatedAt: now,
     })
     .where(eq(usersTable.id, user.id));
 
   setSessionCookie(res, token);
-  res.json({ user: formatUser({ ...user, lastActiveAt: new Date(), lastLoginAt: new Date() }) });
+  res.json({ user: formatUser({ ...user, lastActiveAt: now, lastLoginAt: now }) });
+});
+
+router.post("/auth/setup-password", async (req, res): Promise<void> => {
+  const user = await requireAuthenticatedUser(req, res);
+
+  if (!user) {
+    return;
+  }
+
+  if (!user.passwordResetRequired) {
+    return void res.status(400).json({ error: "Password setup is not required for this account" });
+  }
+
+  const parsed = setupPasswordSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return void res.status(400).json({
+      error: parsed.error.issues[0]?.message ?? "Invalid password setup payload",
+    });
+  }
+
+  const [updatedUser] = await db
+    .update(usersTable)
+    .set({
+      passwordHash: hashPassword(parsed.data.password),
+      passwordResetRequired: false,
+      updatedAt: new Date(),
+    })
+    .where(eq(usersTable.id, user.id))
+    .returning();
+
+  res.json({ user: formatUser(updatedUser) });
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {

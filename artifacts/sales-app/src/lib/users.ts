@@ -3,6 +3,7 @@ import { fetchJson } from "./http";
 
 export type UserRole = "admin" | "sales_rep";
 export type UserStatus = "active" | "inactive";
+export type UserAuthMode = "password" | "setup_required";
 
 export interface ClarityUser {
   id: number;
@@ -13,6 +14,8 @@ export interface ClarityUser {
   title: string;
   role: UserRole;
   status: UserStatus;
+  authMode: UserAuthMode;
+  passwordResetRequired: boolean;
   lastActiveAt: string | null;
   lastLoginAt?: string | null;
   createdAt: string;
@@ -28,7 +31,6 @@ export interface UserInput {
 }
 
 export interface UserCreateInput extends UserInput {
-  pin?: string;
 }
 
 export interface UserPinResponse extends ClarityUser {
@@ -41,6 +43,7 @@ export interface VisibleUser {
   email: string;
   title: string;
   role: UserRole;
+  authMode: UserAuthMode;
 }
 
 export function getCurrentUser() {
@@ -69,10 +72,9 @@ export function updateUser(userId: number, input: UserInput) {
   });
 }
 
-export function resetUserPin(userId: number, pin: string) {
-  return fetchJson<UserPinResponse>(`/api/users/${userId}/reset-pin`, {
+export function resetUserPassword(userId: number) {
+  return fetchJson<UserPinResponse>(`/api/users/${userId}/reset-password`, {
     method: "POST",
-    body: JSON.stringify({ pin }),
   });
 }
 

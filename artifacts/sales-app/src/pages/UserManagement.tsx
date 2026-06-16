@@ -66,7 +66,7 @@ import {
   createUser,
   listUsers,
   removeUser,
-  resetUserPin,
+  resetUserPassword,
   updateUser,
   useCurrentUser,
   type ClarityUser,
@@ -81,7 +81,6 @@ const EMPTY_FORM: UserCreateInput = {
   phone: "",
   title: "Sales Representative",
   status: "active",
-  pin: "2468",
 };
 
 function initials(name: string) {
@@ -141,7 +140,6 @@ export default function UserManagement() {
   const [editingUser, setEditingUser] = useState<ClarityUser | null>(null);
   const [removingUser, setRemovingUser] = useState<ClarityUser | null>(null);
   const [form, setForm] = useState<UserCreateInput>(EMPTY_FORM);
-  const [resetPin, setResetPin] = useState("2468");
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -159,12 +157,11 @@ export default function UserManagement() {
       setDialogOpen(false);
       setEditingUser(null);
       setForm(EMPTY_FORM);
-      setResetPin("2468");
       toast({
         title: editingUser ? "User updated" : "Sales rep created",
         description:
           "temporaryPin" in savedUser
-            ? `${savedUser.name}'s account is ready. Temporary PIN: ${savedUser.temporaryPin}.`
+            ? `${savedUser.name}'s account is ready. Temporary PIN: ${savedUser.temporaryPin}. They'll set their own password after signing in.`
             : `${savedUser.name}'s account is ready.`,
       });
     },
@@ -180,27 +177,26 @@ export default function UserManagement() {
     },
   });
 
-  const resetPinMutation = useMutation({
+  const resetPasswordMutation = useMutation({
     mutationFn: () => {
       if (!editingUser) {
         throw new Error("Select a user first");
       }
 
-      return resetUserPin(editingUser.id, resetPin);
+      return resetUserPassword(editingUser.id);
     },
     onSuccess: async (updatedUser) => {
       await queryClient.invalidateQueries({ queryKey: ["users"] });
       toast({
-        title: "PIN reset",
-        description: `${updatedUser.name}'s new PIN is ${updatedUser.temporaryPin}.`,
+        title: "Password reset",
+        description: `${updatedUser.name} has been reset to temporary PIN ${updatedUser.temporaryPin} and will need to set a new password.`,
       });
-      setResetPin(updatedUser.temporaryPin);
     },
     onError: (error) => {
       toast({
-        title: "Unable to reset PIN",
+        title: "Unable to reset password",
         description:
-          error instanceof Error ? error.message : "Please try a different PIN.",
+          error instanceof Error ? error.message : "Please try again in a moment.",
         variant: "destructive",
       });
     },
@@ -222,7 +218,6 @@ export default function UserManagement() {
         setDialogOpen(false);
         setEditingUser(null);
         setForm(EMPTY_FORM);
-        setResetPin("2468");
       }
       toast({
         title: "User removed",
@@ -268,7 +263,6 @@ export default function UserManagement() {
   function openCreateDialog() {
     setEditingUser(null);
     setForm(EMPTY_FORM);
-    setResetPin("2468");
     setDialogOpen(true);
   }
 
@@ -280,9 +274,7 @@ export default function UserManagement() {
       phone: user.phone ?? "",
       title: user.title,
       status: user.status,
-      pin: "",
     });
-    setResetPin("2468");
     setDialogOpen(true);
   }
 
@@ -331,7 +323,7 @@ export default function UserManagement() {
             </h1>
             <p className="mt-1 text-muted-foreground">
               Manage the people who can work in Clarity and keep sales ownership
-              in sync. Admins can also issue or reset PINs during onboarding.
+              in sync. Admins can reset any user back to the starter PIN during onboarding.
             </p>
           </div>
           <Button onClick={openCreateDialog}>
@@ -487,13 +479,10 @@ export default function UserManagement() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => {
-                              openEditDialog(user);
-                              setResetPin("2468");
-                            }}
+                            onClick={() => openEditDialog(user)}
                           >
                             <KeyRound className="mr-2 size-4" />
-                            Reset PIN
+                            Reset password
                           </Button>
                           {user.role !== "admin" ? (
                             <Button
@@ -526,7 +515,7 @@ export default function UserManagement() {
             <DialogDescription>
               {editingUser
                 ? "Update account details and access status."
-                : "New users receive sales rep access and can be assigned to customers and orders."}
+                : "New users receive sales rep access, sign in with the temporary PIN 2468, and then create their own password."}
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={handleSubmit}>
@@ -612,24 +601,8 @@ export default function UserManagement() {
               </div>
             </div>
             {!editingUser ? (
-              <div className="space-y-2">
-                <Label htmlFor="user-pin">Initial PIN</Label>
-                <Input
-                  id="user-pin"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={form.pin ?? ""}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      pin: event.target.value,
-                    }))
-                  }
-                  placeholder="2468"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Use 4 to 8 digits. Leave `2468` if you want the default PIN.
-                </p>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                New accounts start with temporary PIN `2468`. After first sign-in, the user will be prompted to set and confirm their own password.
               </div>
             ) : null}
             <DialogFooter>
@@ -653,26 +626,18 @@ export default function UserManagement() {
             <div className="rounded-xl border bg-muted/30 p-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
                 <div className="flex-1 space-y-2">
-                  <Label htmlFor="reset-pin">Reset PIN</Label>
-                  <Input
-                    id="reset-pin"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={resetPin}
-                    onChange={(event) => setResetPin(event.target.value)}
-                    placeholder="2468"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Give {editingUser.name} a fresh 4 to 8 digit PIN without changing their role or status.
+                  <Label>Password reset</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Reset {editingUser.name} back to temporary PIN `2468`. Their active sessions will be cleared, and they&apos;ll be prompted to create a new password at next sign-in.
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={resetPinMutation.isPending}
-                  onClick={() => resetPinMutation.mutate()}
+                  disabled={resetPasswordMutation.isPending}
+                  onClick={() => resetPasswordMutation.mutate()}
                 >
-                  {resetPinMutation.isPending ? "Resetting..." : "Reset PIN"}
+                  {resetPasswordMutation.isPending ? "Resetting..." : "Reset to 2468"}
                 </Button>
               </div>
             </div>

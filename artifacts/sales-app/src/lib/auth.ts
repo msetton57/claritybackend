@@ -16,8 +16,15 @@ export function getSession() {
   return fetchJson<SessionResponse>("/api/auth/session");
 }
 
-export function login(input: { email: string; pin: string }) {
+export function login(input: { email: string; password: string }) {
   return fetchJson<SessionResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function setupPassword(input: { password: string; confirmPassword: string }) {
+  return fetchJson<SessionResponse>("/api/auth/setup-password", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -59,6 +66,19 @@ export function useLogout() {
     onSuccess: async () => {
       queryClient.setQueryData(["auth", "session"], null);
       queryClient.removeQueries({ queryKey: ["users", "me"] });
+      await queryClient.invalidateQueries();
+    },
+  });
+}
+
+export function useSetupPassword() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: setupPassword,
+    onSuccess: async (payload) => {
+      queryClient.setQueryData(["auth", "session"], payload);
+      queryClient.setQueryData(["users", "me"], payload.user);
       await queryClient.invalidateQueries();
     },
   });

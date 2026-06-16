@@ -61,8 +61,13 @@ export function AppLayout({ children, fluid = false, scrollContent = true, heade
   useEffect(() => {
     if (error instanceof ApiError && error.status === 401) {
       setLocation("/login");
+      return;
     }
-  }, [error, setLocation]);
+
+    if (currentUser?.passwordResetRequired && location !== "/setup-password") {
+      setLocation("/setup-password");
+    }
+  }, [currentUser?.passwordResetRequired, error, location, setLocation]);
 
   const navItems: NavSection[] = [
     {

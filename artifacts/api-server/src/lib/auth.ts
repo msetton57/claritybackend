@@ -1,10 +1,11 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 import { and, eq, gt } from "drizzle-orm";
 import { authSessionsTable, db, usersTable } from "@workspace/db";
 
 export const SESSION_COOKIE_NAME = "clarity_session";
 const SESSION_TTL_DAYS = 14;
+const PASSWORD_SALT_BYTES = 16;
 
 function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -23,6 +24,34 @@ function safeCompare(left: string, right: string) {
 
 export function verifyLoginPin(candidate: string, expected: string) {
   return safeCompare(candidate.trim(), expected.trim());
+}
+
+export function hashPassword(password: string) {
+  const normalized = password.trim();
+  const salt = randomBytes(PASSWORD_SALT_BYTES).toString("hex");
+  const derivedKey = scryptSync(normalized, salt, 64).toString("hex");
+  return `scrypt:${salt}:${derivedKey}`;
+}
+
+export function verifyPassword(candidate: string, storedHash: string) {
+  const normalizedCandidate = candidate.trim();
+
+  if (storedHash.startsWith("scrypt:")) {
+    const [, salt, expectedKey] = storedHash.split(":");
+
+    if (!salt || !expectedKey) {
+      return false;
+    }
+
+    const candidateKey = scryptSync(normalizedCandidate, salt, 64).toString("hex");
+    return safeCompare(candidateKey, expectedKey);
+  }
+
+  if (storedHash.startsWith("legacy:")) {
+    return verifyLoginPin(normalizedCandidate, storedHash.slice("legacy:".length));
+  }
+
+  return verifyLoginPin(normalizedCandidate, storedHash);
 }
 
 export function setSessionCookie(res: Response, token: string) {
