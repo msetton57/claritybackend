@@ -938,7 +938,7 @@ export default function SalesWorkspace() {
                             ) : null}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex min-w-[210px] flex-col gap-1.5">
+                            <div className="min-w-[210px]">
                               <Select
                                 key={`${item.key}-${item.statusLabel}`}
                                 onValueChange={(value: OpportunityActionType) => {
@@ -958,14 +958,6 @@ export default function SalesWorkspace() {
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <Button
-                                variant="ghost"
-                                className="h-8 justify-start rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700"
-                                onClick={() => handleOpenSnoozeDialog(item)}
-                              >
-                                <EyeOff className="mr-2 size-4" />
-                                Snooze
-                              </Button>
                             </div>
                           </td>
                         </tr>
