@@ -122,6 +122,8 @@ router.get("/collaboration/tasks", async (req, res): Promise<void> => {
     return;
   }
 
+  const includeAllTasks = req.query.scope === "all";
+
   const taskRows = await db
     .select({
       id: collaborativeTasksTable.id,
@@ -139,7 +141,7 @@ router.get("/collaboration/tasks", async (req, res): Promise<void> => {
     .from(collaborativeTasksTable)
     .innerJoin(usersTable, eq(collaborativeTasksTable.createdByUserId, usersTable.id))
     .where(
-      currentUser.role === "admin"
+      includeAllTasks || currentUser.role === "admin"
         ? undefined
         : or(
             eq(collaborativeTasksTable.createdByUserId, currentUser.id),

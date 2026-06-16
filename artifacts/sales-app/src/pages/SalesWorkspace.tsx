@@ -428,12 +428,12 @@ export default function SalesWorkspace() {
     queryKey: ["opportunities"],
     queryFn: listOpportunities,
   });
-  const tasksQuery = useCollaborationTasks();
-  const actionPointsQuery = useWorkspaceActionPoints();
+  const tasksQuery = useCollaborationTasks({ scope: "all" });
+  const actionPointsQuery = useWorkspaceActionPoints({ scope: "all" });
   const customers = customersQuery.data ?? [];
   const salesReps = salesRepsQuery.data ?? [];
   const opportunities = sortByCreatedAtDesc(opportunitiesQuery.data ?? []);
-  const personalTasks = sortByCreatedAtDesc(tasksQuery.data ?? []);
+  const visibleTasks = sortByCreatedAtDesc(tasksQuery.data ?? []);
   const actionPoints = sortByCreatedAtDesc(actionPointsQuery.data ?? []);
   const openOpportunities = useMemo(
     () =>
@@ -628,8 +628,8 @@ export default function SalesWorkspace() {
 
   const openActionPoints = actionPoints.filter((item) => !item.completed);
   const completedActionPoints = actionPoints.filter((item) => item.completed);
-  const openTasks = personalTasks.filter((task) => !task.completed);
-  const completedTasks = personalTasks.filter((task) => task.completed);
+  const openTasks = visibleTasks.filter((task) => !task.completed);
+  const completedTasks = visibleTasks.filter((task) => task.completed);
   const todayDateValue = getTodayDateValue();
   const opportunityItems = useMemo<PipelineItem[]>(
     () =>
@@ -726,7 +726,7 @@ export default function SalesWorkspace() {
   }
 
   function handleToggleTask(id: number) {
-    const task = personalTasks.find((entry) => entry.id === id);
+    const task = visibleTasks.find((entry) => entry.id === id);
     if (!task) return;
     toggleTaskMutation.mutate({ id, completed: !task.completed });
   }

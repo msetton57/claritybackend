@@ -204,6 +204,8 @@ router.get("/crm/action-points", async (req, res): Promise<void> => {
   const currentUser = await requireAuthenticatedUser(req, res);
   if (!currentUser) return;
 
+  const includeAllActionPoints = req.query.scope === "all";
+
   const rows = await db
     .select({
       id: workspaceActionPointsTable.id,
@@ -219,7 +221,7 @@ router.get("/crm/action-points", async (req, res): Promise<void> => {
     })
     .from(workspaceActionPointsTable)
     .innerJoin(customersTable, eq(workspaceActionPointsTable.customerId, customersTable.id))
-    .where(eq(workspaceActionPointsTable.userId, currentUser.id))
+    .where(includeAllActionPoints ? undefined : eq(workspaceActionPointsTable.userId, currentUser.id))
     .orderBy(asc(workspaceActionPointsTable.completed), desc(workspaceActionPointsTable.createdAt));
 
   res.json(rows.map(formatActionPoint));

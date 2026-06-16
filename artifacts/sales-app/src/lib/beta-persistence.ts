@@ -38,6 +38,10 @@ export interface CreateActionPointInput {
   dueDate: string | null;
 }
 
+export interface WorkspaceActionPointQueryOptions {
+  scope?: "mine" | "all";
+}
+
 export function getCustomerFlags() {
   return fetchJson<number[]>("/api/crm/customer-flags");
 }
@@ -64,8 +68,14 @@ export function updateEkgxLead(leadId: number, updates: Partial<Pick<EkgxLead, "
   });
 }
 
-export function listWorkspaceActionPoints() {
-  return fetchJson<WorkspaceActionPoint[]>("/api/crm/action-points");
+export function listWorkspaceActionPoints(options?: WorkspaceActionPointQueryOptions) {
+  const params = new URLSearchParams();
+  if (options?.scope === "all") {
+    params.set("scope", "all");
+  }
+
+  const query = params.toString();
+  return fetchJson<WorkspaceActionPoint[]>(`/api/crm/action-points${query ? `?${query}` : ""}`);
 }
 
 export function createWorkspaceActionPoint(input: CreateActionPointInput) {
@@ -102,9 +112,9 @@ export function useCustomerFlags() {
   });
 }
 
-export function useWorkspaceActionPoints() {
+export function useWorkspaceActionPoints(options?: WorkspaceActionPointQueryOptions) {
   return useQuery({
-    queryKey: ["crm", "action-points"],
-    queryFn: listWorkspaceActionPoints,
+    queryKey: ["crm", "action-points", options?.scope ?? "mine"],
+    queryFn: () => listWorkspaceActionPoints(options),
   });
 }

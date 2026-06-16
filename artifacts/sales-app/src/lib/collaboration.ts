@@ -40,6 +40,10 @@ export interface TaskInput {
   category: CollaborativeTask["category"];
 }
 
+export interface CollaborationTaskQueryOptions {
+  scope?: "visible" | "all";
+}
+
 export interface PosterInput {
   postType: PosterPost["postType"];
   title: string;
@@ -48,8 +52,14 @@ export interface PosterInput {
   targetUserIds: number[];
 }
 
-export function getCollaborationTasks() {
-  return fetchJson<CollaborativeTask[]>("/api/collaboration/tasks");
+export function getCollaborationTasks(options?: CollaborationTaskQueryOptions) {
+  const params = new URLSearchParams();
+  if (options?.scope === "all") {
+    params.set("scope", "all");
+  }
+
+  const query = params.toString();
+  return fetchJson<CollaborativeTask[]>(`/api/collaboration/tasks${query ? `?${query}` : ""}`);
 }
 
 export function createCollaborationTask(input: TaskInput) {
@@ -83,10 +93,10 @@ export function createPosterBoardPost(input: PosterInput) {
   });
 }
 
-export function useCollaborationTasks() {
+export function useCollaborationTasks(options?: CollaborationTaskQueryOptions) {
   return useQuery({
-    queryKey: ["collaboration", "tasks"],
-    queryFn: getCollaborationTasks,
+    queryKey: ["collaboration", "tasks", options?.scope ?? "visible"],
+    queryFn: () => getCollaborationTasks(options),
   });
 }
 
