@@ -11,10 +11,21 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
   UserRoundCheck,
   Users,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,6 +65,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   createUser,
   listUsers,
+  removeUser,
   resetUserPin,
   updateUser,
   useCurrentUser,
@@ -127,6 +139,7 @@ export default function UserManagement() {
   const [statusFilter, setStatusFilter] = useState<"all" | UserStatus>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<ClarityUser | null>(null);
+  const [removingUser, setRemovingUser] = useState<ClarityUser | null>(null);
   const [form, setForm] = useState<UserCreateInput>(EMPTY_FORM);
   const [resetPin, setResetPin] = useState("2468");
 
@@ -188,6 +201,41 @@ export default function UserManagement() {
         title: "Unable to reset PIN",
         description:
           error instanceof Error ? error.message : "Please try a different PIN.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const removeUserMutation = useMutation({
+    mutationFn: async () => {
+      if (!removingUser) {
+        throw new Error("Select a user first");
+      }
+
+      await removeUser(removingUser.id);
+      return removingUser;
+    },
+    onSuccess: async (removedUser) => {
+      await queryClient.invalidateQueries({ queryKey: ["users"] });
+      setRemovingUser(null);
+      if (editingUser?.id === removedUser.id) {
+        setDialogOpen(false);
+        setEditingUser(null);
+        setForm(EMPTY_FORM);
+        setResetPin("2468");
+      }
+      toast({
+        title: "User removed",
+        description: `${removedUser.name} can no longer sign in. Their history and ownership records were kept intact.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Unable to remove user",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Please try again in a moment.",
         variant: "destructive",
       });
     },
@@ -288,7 +336,7 @@ export default function UserManagement() {
           </div>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 size-4" />
-            Add sales rep
+            Add user
           </Button>
         </div>
 
@@ -447,6 +495,17 @@ export default function UserManagement() {
                             <KeyRound className="mr-2 size-4" />
                             Reset PIN
                           </Button>
+                          {user.role !== "admin" ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => setRemovingUser(user)}
+                            >
+                              <Trash2 className="mr-2 size-4" />
+                              Remove
+                            </Button>
+                          ) : null}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -462,7 +521,7 @@ export default function UserManagement() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingUser ? "Edit user" : "Add a sales rep"}
+              {editingUser ? "Edit user" : "Add a user"}
             </DialogTitle>
             <DialogDescription>
               {editingUser
@@ -620,6 +679,41 @@ export default function UserManagement() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(removingUser)}
+        onOpenChange={(open) => {
+          if (!open && !removeUserMutation.isPending) {
+            setRemovingUser(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this user?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removingUser
+                ? `${removingUser.name} will lose access immediately and disappear from the active login list. Their history and existing ownership records will stay in place.`
+                : "This user will lose access immediately."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeUserMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={removeUserMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                removeUserMutation.mutate();
+              }}
+            >
+              {removeUserMutation.isPending ? "Removing..." : "Remove user"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

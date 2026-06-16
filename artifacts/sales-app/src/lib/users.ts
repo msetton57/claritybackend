@@ -76,6 +76,12 @@ export function resetUserPin(userId: number, pin: string) {
   });
 }
 
+export function removeUser(userId: number) {
+  return fetchJson<void>(`/api/users/${userId}`, {
+    method: "DELETE",
+  });
+}
+
 export function useCurrentUser() {
   return useQuery({
     queryKey: ["users", "me"],

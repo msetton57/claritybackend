@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod/v4";
-import { db, salesRepsTable, usersTable } from "@workspace/db";
+import { authSessionsTable, db, salesRepsTable, usersTable } from "@workspace/db";
 import { requireAdmin, requireAuthenticatedUser } from "../lib/auth";
 
 const router = Router();
@@ -247,6 +247,53 @@ router.post("/users/:id/reset-pin", async (req, res): Promise<void> => {
     ...formatUser(updatedUser),
     temporaryPin: parsed.data.pin,
   });
+});
+
+router.delete("/users/:id", async (req, res): Promise<void> => {
+  const currentUser = await requireAdmin(req, res);
+  if (!currentUser) return;
+
+  const userId = Number(req.params.id);
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return void res.status(400).json({ error: "Invalid user id" });
+  }
+
+  if (currentUser.id === userId) {
+    return void res.status(400).json({ error: "You cannot remove your own account" });
+  }
+
+  const [targetUser] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, userId))
+    .limit(1);
+
+  if (!targetUser) {
+    return void res.status(404).json({ error: "User not found" });
+  }
+
+  if (targetUser.role === "admin") {
+    return void res
+      .status(400)
+      .json({ error: "Administrator accounts cannot be removed" });
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(authSessionsTable)
+      .where(eq(authSessionsTable.userId, userId));
+
+    await tx
+      .update(usersTable)
+      .set({
+        status: "inactive",
+        updatedAt: new Date(),
+      })
+      .where(eq(usersTable.id, userId));
+  });
+
+  res.status(204).send();
 });
 
 export default router;
