@@ -64,6 +64,34 @@ const ACTIVITY_ACTIONS: Array<{
   { type: "task", label: "Follow-Up Task", title: "Create Follow-Up Task", description: "Create a dated follow-up tied to this customer record." },
 ];
 
+const OPPORTUNITY_WORKFLOW_OPTIONS = [
+  {
+    value: "Prospect outreach",
+    label: "Prospect outreach",
+    description: "Initial qualification, intro email, or discovery call.",
+  },
+  {
+    value: "Account review",
+    label: "Account review",
+    description: "Expand an existing customer relationship or reopen demand.",
+  },
+  {
+    value: "Quote sent",
+    label: "Quote sent",
+    description: "Proposal is out and the team is waiting on feedback.",
+  },
+  {
+    value: "Negotiation",
+    label: "Negotiation",
+    description: "Commercial terms, pricing, or product mix are in motion.",
+  },
+  {
+    value: "Likely to close",
+    label: "Likely to close",
+    description: "Final checkpoint before converting to won.",
+  },
+] as const;
+
 function formatStatusLabel(status: string) {
   return status
     .split("_")
@@ -102,29 +130,6 @@ function getInitials(value: string) {
 function asDateInputValue(value: string | null) {
   if (!value) return "";
   return value.slice(0, 10);
-}
-
-function asDateTimeInputValue(value: string | null) {
-  if (!value) return "";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
-function dateTimeInputToIso(value: string) {
-  if (!value) return null;
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed.toISOString();
 }
 
 function formatDateTime(dateString: string) {
@@ -173,8 +178,6 @@ function getDefaultOpportunityForm(customer: CustomerCrmDetail | null) {
     status: customer?.status === "prospect" ? "Prospect outreach" : "Account review",
     dueDate: "",
     notes: "",
-    lastContactedAt: "",
-    lastContactNote: "",
   };
 }
 
@@ -961,8 +964,6 @@ export default function CustomerCrmDetail() {
         source: "existing_customer",
         dueDate: opportunityForm.dueDate || null,
         notes: opportunityForm.notes.trim() || null,
-        lastContactedAt: dateTimeInputToIso(opportunityForm.lastContactedAt),
-        lastContactNote: opportunityForm.lastContactNote.trim() || null,
       });
     },
     onSuccess: async () => {
@@ -1293,64 +1294,136 @@ export default function CustomerCrmDetail() {
         </section>
 
         <Dialog open={createOpportunityOpen} onOpenChange={setCreateOpportunityOpen}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Create Opportunity</DialogTitle>
-              <DialogDescription>
-                Add the key pipeline details for {detail.companyName} before saving the opportunity.
-              </DialogDescription>
-            </DialogHeader>
+          <DialogContent className="max-w-4xl overflow-hidden border-slate-200 p-0">
+            <div className="bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.18),_transparent_38%),linear-gradient(135deg,_#eff6ff_0%,_#f8fafc_42%,_#ffffff_100%)] px-6 py-6 sm:px-8">
+              <DialogHeader className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="border-sky-200 bg-white/85 text-sky-700 shadow-sm">
+                    Pipeline setup
+                  </Badge>
+                  <Badge variant="outline" className="border-slate-300 bg-white/70 text-slate-700">
+                    {detail.status === "prospect" ? "Prospect account" : "Existing customer"}
+                  </Badge>
+                </div>
+                <div className="space-y-2">
+                  <DialogTitle className="text-2xl tracking-[-0.04em] text-slate-950">Create Opportunity</DialogTitle>
+                  <DialogDescription className="max-w-2xl text-sm leading-6 text-slate-600">
+                    Capture the opportunity brief and the next checkpoint for {detail.companyName}. Contact history is logged later from the Daily Command Center when the team actually works the deal.
+                  </DialogDescription>
+                </div>
+              </DialogHeader>
+            </div>
 
-            <div className="space-y-5">
-              <div className="rounded-[24px] border border-slate-200 bg-white p-5">
-                <p className="text-sm font-semibold text-slate-900">Opportunity details</p>
-                <div className="mt-4 grid gap-4">
+            <div className="grid gap-0 lg:grid-cols-[1.45fr_0.95fr]">
+              <div className="space-y-6 px-6 py-6 sm:px-8">
+                <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.45)]">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">Opportunity brief</p>
+                      <p className="mt-1 text-sm text-slate-500">Define what we are trying to win and where it sits in the workflow.</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-right">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Account owner</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-700">{detail.assignedSalesRep}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-5">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-slate-700">Opportunity</span>
+                      <Textarea
+                        className="min-h-28 rounded-2xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:bg-white"
+                        placeholder="Examples: Expand glove program to two new locations, quote new PPE bundle, restart dormant account conversation..."
+                        value={opportunityForm.title}
+                        onChange={(event) => setOpportunityForm((current) => ({ ...current, title: event.target.value }))}
+                      />
+                    </label>
+
+                    <div className="grid gap-5 md:grid-cols-[1.15fr_0.85fr]">
+                      <label className="grid gap-2">
+                        <span className="text-sm font-medium text-slate-700">Workflow stage</span>
+                        <Select
+                          value={opportunityForm.status}
+                          onValueChange={(value) => setOpportunityForm((current) => ({ ...current, status: value }))}
+                        >
+                          <SelectTrigger className="rounded-2xl border-slate-200 bg-slate-50/70 shadow-none">
+                            <SelectValue placeholder="Select workflow stage" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {OPPORTUNITY_WORKFLOW_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-slate-500">
+                          {OPPORTUNITY_WORKFLOW_OPTIONS.find((option) => option.value === opportunityForm.status)?.description ??
+                            "Choose the stage that best reflects the current motion."}
+                        </p>
+                      </label>
+
+                      <label className="grid gap-2">
+                        <span className="text-sm font-medium text-slate-700">Next checkpoint</span>
+                        <Input
+                          type="date"
+                          className="rounded-2xl border-slate-200 bg-slate-50/70 shadow-none"
+                          value={opportunityForm.dueDate}
+                          onChange={(event) => setOpportunityForm((current) => ({ ...current, dueDate: event.target.value }))}
+                        />
+                        <p className="text-xs text-slate-500">Optional, but useful for keeping the opportunity visible in the workspace.</p>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.35)]">
+                  <p className="text-sm font-semibold text-slate-950">Context for the team</p>
+                  <p className="mt-1 text-sm text-slate-500">Add blockers, product interest, pricing context, or the next thing sales should do.</p>
                   <Textarea
-                    className="min-h-24"
-                    placeholder="Describe the opportunity"
-                    value={opportunityForm.title}
-                    onChange={(event) => setOpportunityForm((current) => ({ ...current, title: event.target.value }))}
-                  />
-                  <Input
-                    placeholder="Status, for example: Quote sent"
-                    value={opportunityForm.status}
-                    onChange={(event) => setOpportunityForm((current) => ({ ...current, status: event.target.value }))}
-                  />
-                  <Input
-                    type="date"
-                    value={opportunityForm.dueDate}
-                    onChange={(event) => setOpportunityForm((current) => ({ ...current, dueDate: event.target.value }))}
-                  />
-                  <Textarea
-                    className="min-h-24"
-                    placeholder="Notes, blockers, or next steps"
+                    className="mt-4 min-h-32 rounded-2xl border-slate-200 bg-slate-50/70 shadow-none focus-visible:bg-white"
+                    placeholder="Example: Buyer asked for a fresh quote on nitrile gloves and isolation gowns. Pricing needs approval before Friday. Plan is to send revision and book a follow-up call."
                     value={opportunityForm.notes}
                     onChange={(event) => setOpportunityForm((current) => ({ ...current, notes: event.target.value }))}
                   />
-                </div>
+                </section>
               </div>
 
-              <div className="rounded-[24px] border border-slate-200 bg-white p-5">
-                <p className="text-sm font-semibold text-slate-900">Last contact</p>
-                <div className="mt-4 grid gap-4">
-                  <Input
-                    type="datetime-local"
-                    value={opportunityForm.lastContactedAt}
-                    onChange={(event) => setOpportunityForm((current) => ({ ...current, lastContactedAt: event.target.value }))}
-                  />
-                  <Textarea
-                    className="min-h-24"
-                    placeholder="What happened in the latest touchpoint?"
-                    value={opportunityForm.lastContactNote}
-                    onChange={(event) => setOpportunityForm((current) => ({ ...current, lastContactNote: event.target.value }))}
-                  />
+              <aside className="border-t border-slate-200 bg-slate-50/80 px-6 py-6 sm:px-8 lg:border-l lg:border-t-0">
+                <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.35)]">
+                  <p className="text-sm font-semibold text-slate-950">What happens next</p>
+                  <div className="mt-5 space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">1. Save to pipeline</p>
+                      <p className="mt-1 text-sm text-slate-600">The opportunity opens in the pipeline and becomes visible on the Daily Command Center.</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">2. Work from command center</p>
+                      <p className="mt-1 text-sm text-slate-600">Sales logs calls, emails, meetings, and follow-ups there as the deal progresses.</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">3. Contact history updates later</p>
+                      <p className="mt-1 text-sm text-slate-600">The `last contacted` value is now derived from actual logged outreach instead of being entered during creation.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Recommended starting stage</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{opportunityForm.status || "Prospect outreach"}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {detail.status === "prospect"
+                        ? "This account is still a prospect, so start with outreach or qualification unless a quote is already in motion."
+                        : "This is already a customer account, so use account review or a later-stage pipeline status when there is active commercial work underway."}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              </aside>
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="border-t border-slate-200 bg-white px-6 py-4 sm:px-8">
               <Button variant="outline" onClick={() => setCreateOpportunityOpen(false)}>Cancel</Button>
               <Button
+                className="rounded-xl bg-slate-950 text-white hover:bg-slate-800"
                 disabled={createOpportunityMutation.isPending || !opportunityForm.title.trim()}
                 onClick={() => createOpportunityMutation.mutate()}
               >

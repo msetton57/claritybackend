@@ -7,8 +7,6 @@ import {
   Circle,
   Clock3,
   Plus,
-  RotateCcw,
-  Search,
   Trash2,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -78,8 +76,6 @@ type OpportunityContactMeta = {
 };
 
 const CONTACT_LOG_NOTE_PREFIX = "contact-log:";
-const DASHBOARD_SNOOZE_STORAGE_KEY = "sales-app.workspace-dashboard-snoozes";
-const DASHBOARD_SNOOZE_UPDATED_EVENT = "sales-app:workspace-dashboard-snoozes-updated";
 const PROSPECT_CONTACT_LOG_STORAGE_KEY = "sales-app.workspace-prospect-contact-log";
 const OPPORTUNITY_ACTION_OPTIONS = [
   { value: "call", label: "Call" },
@@ -88,8 +84,6 @@ const OPPORTUNITY_ACTION_OPTIONS = [
   { value: "follow_up", label: "Follow Up" },
   { value: "other", label: "Other" },
 ] as const;
-
-type DashboardSnoozeMap = Record<string, string>;
 
 type PipelineItem = {
   key: string;
@@ -105,8 +99,25 @@ type PipelineItem = {
   lastContactNote: string | null;
   lastContactMeta: OpportunityContactMeta | null;
   detail: string;
-  snoozedUntil: string | null;
   opportunity?: SalesOpportunity;
+};
+
+type UnifiedPipelineItem = PipelineItem;
+
+type UnifiedWorkItem = {
+  key: string;
+  source: "action_point" | "task";
+  id: number;
+  title: string;
+  details: string | null;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+  relatedCustomerId: number | null;
+  relatedCustomerName: string | null;
+  relatedCustomerStatus: CustomerListItem["status"] | WorkspaceActionPoint["customerStatus"] | null;
+  dueDate: string | null;
+  priority: TodoTask["priority"] | null;
 };
 
 type ContactLogTarget = {
@@ -122,8 +133,6 @@ type ContactDetailTarget = {
   title: string;
   meta: OpportunityContactMeta;
 };
-
-type SnoozeTarget = Pick<PipelineItem, "key" | "kind" | "title" | "companyName">;
 
 function getStageLabel(customer: CustomerListItem) {
   if (customer.email && customer.phone) {
@@ -319,6 +328,28 @@ function getDueBadgeClasses(dueType: "today" | "tomorrow" | "upcoming" | "late")
   return "border-sky-200 bg-sky-50 text-sky-700";
 }
 
+function getPriorityBadgeClasses(priority: TodoTask["priority"] | null) {
+  if (priority === "high") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  if (priority === "low") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function getWorkSourceBadgeClasses(source: UnifiedWorkItem["source"]) {
+  return source === "action_point"
+    ? "border-sky-200 bg-sky-50 text-sky-700"
+    : "border-violet-200 bg-violet-50 text-violet-700";
+}
+
+function getWorkSourceLabel(source: UnifiedWorkItem["source"]) {
+  return source === "action_point" ? "Action point" : "Task";
+}
+
 function getActionPointAccountTypeLabel(status: CustomerListItem["status"] | WorkspaceActionPoint["customerStatus"]) {
   return status === "prospect" ? "Prospect" : "Customer";
 }
@@ -335,41 +366,6 @@ function sortByCreatedAtDesc<T extends { createdAt?: string }>(items: T[]) {
     const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
     return rightTime - leftTime;
   });
-}
-
-function readDashboardSnoozes(): DashboardSnoozeMap {
-  if (typeof window === "undefined") {
-    return {};
-  }
-
-  const stored = window.localStorage.getItem(DASHBOARD_SNOOZE_STORAGE_KEY);
-  if (!stored) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(stored);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string",
-      ),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function saveDashboardSnoozes(snoozes: DashboardSnoozeMap) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(DASHBOARD_SNOOZE_STORAGE_KEY, JSON.stringify(snoozes));
-  window.dispatchEvent(new CustomEvent(DASHBOARD_SNOOZE_UPDATED_EVENT));
 }
 
 function readProspectContactLogMap(): Record<string, OpportunityContactMeta> {
@@ -412,23 +408,6 @@ function saveProspectContactLogMap(contactLogMap: Record<string, OpportunityCont
   window.localStorage.setItem(PROSPECT_CONTACT_LOG_STORAGE_KEY, JSON.stringify(contactLogMap));
 }
 
-function formatActionDate(value: string) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(`${value}T12:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
 function getWorkspaceCustomerHref(customerId: number) {
   return `/customers/${customerId}?from=sales-hub`;
 }
@@ -437,10 +416,6 @@ function getTodayDateValue() {
   const now = new Date();
   const offset = now.getTimezoneOffset();
   return new Date(now.getTime() - offset * 60 * 1000).toISOString().slice(0, 10);
-}
-
-function isSnoozedUntilFuture(dateValue: string | null, today: string) {
-  return Boolean(dateValue && dateValue > today);
 }
 
 function addDays(dateValue: string, days: number) {
@@ -522,34 +497,23 @@ export default function SalesWorkspace() {
         .sort((left, right) => right.openOrders - left.openOrders),
     [customers],
   );
-  const [actionPointView, setActionPointView] = useState<"open" | "completed">("open");
-  const [actionPointSearch, setActionPointSearch] = useState("");
-  const [taskView, setTaskView] = useState<"open" | "completed">("open");
-  const [opportunityView, setOpportunityView] = useState<"open" | "snoozed">("open");
-  const [prospectView, setProspectView] = useState<"open" | "snoozed">("open");
-  const [actionPointOpen, setActionPointOpen] = useState(false);
-  const [actionPointTargetOpen, setActionPointTargetOpen] = useState(false);
+  const [pipelineView, setPipelineView] = useState<"all" | "prospect" | "opportunity">("all");
+  const [workView, setWorkView] = useState<"open" | "completed">("open");
   const [taskOpen, setTaskOpen] = useState(false);
+  const [taskTargetOpen, setTaskTargetOpen] = useState(false);
   const [contactLogOpen, setContactLogOpen] = useState(false);
   const [contactDetailOpen, setContactDetailOpen] = useState(false);
-  const [dashboardSnoozes, setDashboardSnoozes] = useState<DashboardSnoozeMap>(() => readDashboardSnoozes());
   const [prospectContactLogMap, setProspectContactLogMap] = useState<Record<string, OpportunityContactMeta>>(
     () => readProspectContactLogMap(),
   );
-  const [snoozeTarget, setSnoozeTarget] = useState<SnoozeTarget | null>(null);
-  const [snoozeDate, setSnoozeDate] = useState("");
   const [contactLogTarget, setContactLogTarget] = useState<ContactLogTarget | null>(null);
   const [selectedContactDetail, setSelectedContactDetail] = useState<ContactDetailTarget | null>(null);
-  const [newActionPoint, setNewActionPoint] = useState({
-    title: "",
-    details: "",
-    customerId: "",
-    dueDate: getTodayDateValue(),
-  });
   const [newTask, setNewTask] = useState({
     title: "",
     notes: "",
     priority: "high" as TodoTask["priority"],
+    customerId: "",
+    dueDate: "",
   });
   const [contactLogAction, setContactLogAction] = useState<OpportunityActionType>("call");
   const [contactLogSalesRepId, setContactLogSalesRepId] = useState("");
@@ -652,14 +616,15 @@ export default function SalesWorkspace() {
     mutationFn: createWorkspaceActionPoint,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["crm", "action-points"] });
-      setNewActionPoint({
+      setNewTask({
         title: "",
-        details: "",
+        notes: "",
+        priority: "high",
         customerId: "",
-        dueDate: getTodayDateValue(),
+        dueDate: "",
       });
-      setActionPointTargetOpen(false);
-      setActionPointOpen(false);
+      setTaskTargetOpen(false);
+      setTaskOpen(false);
       toast({ title: "Action point added" });
     },
     onError: (error: Error) =>
@@ -684,19 +649,17 @@ export default function SalesWorkspace() {
         title: "",
         notes: "",
         priority: "high",
+        customerId: "",
+        dueDate: "",
       });
       setTaskOpen(false);
+      setTaskTargetOpen(false);
       toast({ title: "Task added" });
     },
     onError: (error: Error) =>
       toast({ title: "Unable to add task", description: error.message, variant: "destructive" }),
   });
 
-  const openActionPoints = actionPoints.filter((item) => !item.completed);
-  const completedActionPoints = actionPoints.filter((item) => item.completed);
-  const openTasks = visibleTasks.filter((task) => !task.completed);
-  const completedTasks = visibleTasks.filter((task) => task.completed);
-  const todayDateValue = getTodayDateValue();
   const actionPointTargets = useMemo(
     () =>
       [...customers].sort((left, right) => {
@@ -706,47 +669,12 @@ export default function SalesWorkspace() {
       }),
     [customers],
   );
-  const selectedActionPointTarget = actionPointTargets.find((entry) => String(entry.id) === newActionPoint.customerId) ?? null;
-  const normalizedActionPointSearch = actionPointSearch.trim().toLowerCase();
-  const visibleOpenActionPoints = useMemo(
-    () =>
-      openActionPoints.filter((item) => {
-        if (!normalizedActionPointSearch) {
-          return true;
-        }
-
-        return [
-          item.title,
-          item.details,
-          item.customerName,
-          getActionPointAccountTypeLabel(item.customerStatus),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedActionPointSearch);
-      }),
-    [normalizedActionPointSearch, openActionPoints],
+  const selectedTaskTarget = actionPointTargets.find((entry) => String(entry.id) === newTask.customerId) ?? null;
+  const openOpportunityCustomerIds = useMemo(
+    () => new Set(openOpportunities.map((opportunity) => opportunity.customerId)),
+    [openOpportunities],
   );
-  const visibleCompletedActionPoints = useMemo(
-    () =>
-      completedActionPoints.filter((item) => {
-        if (!normalizedActionPointSearch) {
-          return true;
-        }
-
-        return [
-          item.title,
-          item.details,
-          item.customerName,
-          getActionPointAccountTypeLabel(item.customerStatus),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedActionPointSearch);
-      }),
-    [completedActionPoints, normalizedActionPointSearch],
-  );
-  const opportunityItems = useMemo<PipelineItem[]>(
+  const opportunityItems = useMemo<UnifiedPipelineItem[]>(
     () =>
       openOpportunities.map((opportunity) => {
         const lastContactMeta = parseContactMeta(opportunity.lastContactNote);
@@ -768,15 +696,16 @@ export default function SalesWorkspace() {
             : null,
           lastContactMeta,
           detail: opportunity.notes ?? "",
-          snoozedUntil: dashboardSnoozes[`opportunity:${opportunity.id}`] ?? null,
           opportunity,
         };
       }),
-    [dashboardSnoozes, openOpportunities],
+    [openOpportunities],
   );
-  const prospectItems = useMemo<PipelineItem[]>(
+  const prospectItems = useMemo<UnifiedPipelineItem[]>(
     () =>
-      prospects.map((customer) => {
+      prospects
+        .filter((customer) => !openOpportunityCustomerIds.has(customer.id))
+        .map((customer) => {
         const lastContactMeta = prospectContactLogMap[`prospect:${customer.id}`] ?? null;
         const label = lastContactMeta ? lastContactMeta.actionLabel : getStageLabel(customer);
         return {
@@ -799,39 +728,78 @@ export default function SalesWorkspace() {
               : "No contact details captured yet",
           lastContactMeta,
           detail: "",
-          snoozedUntil: dashboardSnoozes[`prospect:${customer.id}`] ?? null,
         };
       }),
-    [dashboardSnoozes, prospectContactLogMap, prospects],
+    [openOpportunityCustomerIds, prospectContactLogMap, prospects],
   );
-  const activeOpportunityItems = useMemo(
-    () => opportunityItems.filter((item) => !isSnoozedUntilFuture(item.snoozedUntil, todayDateValue)),
-    [opportunityItems, todayDateValue],
-  );
-  const snoozedOpportunityItems = useMemo(
+  const pipelineItems = useMemo<UnifiedPipelineItem[]>(
     () =>
-      opportunityItems
-        .filter((item) => isSnoozedUntilFuture(item.snoozedUntil, todayDateValue))
-        .sort((left, right) =>
-          left.snoozedUntil && right.snoozedUntil ? left.snoozedUntil.localeCompare(right.snoozedUntil) : 0,
-        ),
-    [opportunityItems, todayDateValue],
+      [...opportunityItems, ...prospectItems].sort((left, right) => {
+        const leftContact = getLastContactSortValue(left.lastContactMeta?.createdAt ?? left.opportunity?.lastContactedAt ?? null);
+        const rightContact = getLastContactSortValue(right.lastContactMeta?.createdAt ?? right.opportunity?.lastContactedAt ?? null);
+        if (leftContact !== rightContact) {
+          return leftContact - rightContact;
+        }
+
+        return left.companyName.localeCompare(right.companyName);
+      }),
+    [opportunityItems, prospectItems],
   );
-  const activeProspectItems = useMemo(
-    () => prospectItems.filter((item) => !isSnoozedUntilFuture(item.snoozedUntil, todayDateValue)),
-    [prospectItems, todayDateValue],
-  );
-  const snoozedProspectItems = useMemo(
+  const visiblePipelineItems = useMemo(
     () =>
-      prospectItems
-        .filter((item) => isSnoozedUntilFuture(item.snoozedUntil, todayDateValue))
-        .sort((left, right) =>
-          left.snoozedUntil && right.snoozedUntil ? left.snoozedUntil.localeCompare(right.snoozedUntil) : 0,
-        ),
-    [prospectItems, todayDateValue],
+      pipelineItems.filter((item) => {
+        if (pipelineView === "all") return true;
+        return item.kind === pipelineView;
+      }),
+    [pipelineItems, pipelineView],
   );
+  const workItems = useMemo<UnifiedWorkItem[]>(
+    () =>
+      [...actionPoints.map((item) => ({
+        key: `action-point:${item.id}`,
+        source: "action_point" as const,
+        id: item.id,
+        title: item.title,
+        details: item.details || null,
+        completed: item.completed,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        relatedCustomerId: item.customerId,
+        relatedCustomerName: item.customerName,
+        relatedCustomerStatus: item.customerStatus,
+        dueDate: item.dueDate,
+        priority: null,
+      })), ...visibleTasks.map((task) => ({
+        key: `task:${task.id}`,
+        source: "task" as const,
+        id: task.id,
+        title: task.title,
+        details: task.notes,
+        completed: task.completed,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        relatedCustomerId: null,
+        relatedCustomerName: null,
+        relatedCustomerStatus: null,
+        dueDate: null,
+        priority: task.priority,
+      }))].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+    [actionPoints, visibleTasks],
+  );
+  const filteredWorkItems = useMemo(
+    () =>
+      workItems.filter((item) => {
+        if (item.completed !== (workView === "completed")) {
+          return false;
+        }
+
+        return true;
+      }),
+    [workItems, workView],
+  );
+  const completedActionPointCount = workItems.filter((item) => item.source === "action_point" && item.completed).length;
   const dashboardMetrics = {
-    dueToday: openActionPoints.filter((item) => getDueMeta(item.dueDate).dueType === "today").length,
+    dueToday: workItems.filter((item) => !item.completed && item.dueDate && getDueMeta(item.dueDate).dueType === "today").length,
   };
 
   function handleToggleActionPoint(id: number) {
@@ -850,29 +818,25 @@ export default function SalesWorkspace() {
     toggleTaskMutation.mutate({ id, completed: !task.completed });
   }
 
-  function handleCreateActionPoint() {
-    const title = newActionPoint.title.trim();
-    const customerId = Number(newActionPoint.customerId);
-    if (!title || !customerId) {
-      return;
-    }
-
-    const customer = customers.find((entry) => entry.id === customerId);
-    if (!customer) {
-      return;
-    }
-
-    createActionPointMutation.mutate({
-      customerId,
-      title,
-      details: newActionPoint.details.trim(),
-      dueDate: newActionPoint.dueDate || null,
-    });
-  }
-
   function handleCreateTask() {
     const title = newTask.title.trim();
     if (!title) {
+      return;
+    }
+
+    const customerId = Number(newTask.customerId);
+    if (customerId) {
+      const customer = customers.find((entry) => entry.id === customerId);
+      if (!customer) {
+        return;
+      }
+
+      createActionPointMutation.mutate({
+        customerId,
+        title,
+        details: newTask.notes.trim(),
+        dueDate: newTask.dueDate || null,
+      });
       return;
     }
 
@@ -896,38 +860,6 @@ export default function SalesWorkspace() {
     setContactLogSalesRepId(getDefaultSalesRepId(item.opportunity ?? null, customers, salesReps));
     setContactLogDetails("");
     setContactLogOpen(true);
-  }
-
-  function handleOpenSnoozeDialog(item: PipelineItem) {
-    setSnoozeTarget({
-      key: item.key,
-      kind: item.kind,
-      title: item.title,
-      companyName: item.companyName,
-    });
-    setSnoozeDate(item.snoozedUntil ?? todayDateValue);
-  }
-
-  function handleSaveSnooze() {
-    if (!snoozeTarget || !snoozeDate) {
-      return;
-    }
-
-    const next = {
-      ...dashboardSnoozes,
-      [snoozeTarget.key]: snoozeDate,
-    };
-    setDashboardSnoozes(next);
-    saveDashboardSnoozes(next);
-    setSnoozeTarget(null);
-    setSnoozeDate("");
-  }
-
-  function handleUnsnooze(itemKey: string) {
-    const next = { ...dashboardSnoozes };
-    delete next[itemKey];
-    setDashboardSnoozes(next);
-    saveDashboardSnoozes(next);
   }
 
   function handleLogContact() {
@@ -969,200 +901,74 @@ export default function SalesWorkspace() {
       fluid
       scrollContent={false}
       headerContent={(
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-              Sales Workspace
-            </Badge>
-            <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950 md:text-xl">
-              Daily Command Center
-            </h1>
-          </div>
-          <p className="mt-1 hidden max-w-3xl text-sm text-slate-600 lg:block">
-            Work the pipeline from one queue, snooze anything that should disappear until a future date, and jump straight into the account when it is time to move.
-          </p>
+        <div className="flex min-h-[44px] items-center pl-2 md:pl-4">
+          <img
+            src="https://claritydiagnostics.com/wp-content/uploads/2022/07/Asset-1@4x.png"
+            alt="Clarity Diagnostics"
+            className="h-8 w-auto object-contain md:h-9"
+          />
         </div>
       )}
     >
       <div className="flex h-full min-h-0 flex-col gap-4">
         <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-2">
-          <Card className="flex min-h-0 flex-col overflow-hidden rounded-[1.6rem] border-slate-200 shadow-sm">
+            <Card className="flex min-h-0 flex-col overflow-hidden rounded-[1.6rem] border-slate-200 shadow-sm">
             <CardHeader className="border-b border-slate-200 bg-slate-50/70">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <CardTitle>Open Opportunities</CardTitle>
+                  <CardTitle>Pipeline</CardTitle>
                   <p className="mt-1 text-sm text-slate-600">
-                    Opportunities created from the Customer Hub.
+                    Prospects and open opportunities in one queue, with duplicate prospect rows suppressed when an open opportunity already exists.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-                    {activeOpportunityItems.length} open
+                    {visiblePipelineItems.length} visible
                   </Badge>
-                  <Tabs value={opportunityView} onValueChange={(value) => setOpportunityView(value as "open" | "snoozed")}>
+                  <Tabs value={pipelineView} onValueChange={(value) => setPipelineView(value as "all" | "prospect" | "opportunity")}>
                     <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
-                      <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
-                      <TabsTrigger value="snoozed" className="rounded-lg">Snoozed</TabsTrigger>
+                      <TabsTrigger value="prospect" className="rounded-lg">Prospect</TabsTrigger>
+                      <TabsTrigger value="opportunity" className="rounded-lg">Opportunity</TabsTrigger>
+                      <TabsTrigger value="all" className="rounded-lg">All</TabsTrigger>
                     </TabsList>
                   </Tabs>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="min-h-0 overflow-y-auto p-0">
-              {opportunityView === "open" ? activeOpportunityItems.length > 0 ? (
+              {visiblePipelineItems.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[840px] text-sm">
+                  <table className="w-full min-w-[980px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
                       <tr>
                         <th className="px-5 py-3 font-semibold">Company</th>
                         <th className="px-5 py-3 font-semibold">Contact</th>
-                        <th className="px-5 py-3 font-semibold">Opportunity</th>
+                        <th className="px-5 py-3 font-semibold">Pipeline Item</th>
                         <th className="px-5 py-3 font-semibold">Last Contacted</th>
                         <th className="px-5 py-3 font-semibold">Status</th>
                         <th className="px-4 py-2.5 font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeOpportunityItems.map((item) => (
+                      {visiblePipelineItems.map((item) => (
                         <tr key={item.key} className="group border-t border-slate-200 transition hover:bg-slate-50/80">
                           <td className="px-4 py-3">
                             <button type="button" className="text-left" onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}>
-                              <div className="font-semibold text-slate-950 transition group-hover:text-sky-800">{item.companyName}</div>
-                            </button>
-                          </td>
-                          <td className="px-4 py-3 text-slate-700">{item.contactName}</td>
-                          <td className="px-4 py-3 text-slate-700">
-                            <div className="font-medium text-sky-700">{item.subtitle}</div>
-                            {item.detail ? <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.detail}</div> : null}
-                          </td>
-                          <td className="px-4 py-3 text-slate-700">
-                            <div className="min-w-[170px]">
-                              <div className="font-medium text-slate-800">{item.lastContactLabel}</div>
-                              {item.lastContactNote ? (
-                                <div className="mt-0.5 text-xs text-slate-500">
-                                  {item.lastContactNote}
-                                </div>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            {item.opportunity && item.lastContactMeta ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-7 rounded-lg px-2 text-xs text-sky-700 hover:text-sky-800"
-                                onClick={() => handleOpenContactDetail(item)}
-                              >
-                                View
-                              </Button>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="min-w-[210px]">
-                              <Select
-                                key={`${item.key}-${item.statusLabel}`}
-                                onValueChange={(value: OpportunityActionType) => {
-                                  handleChoosePipelineAction(item, value);
-                                }}
-                              >
-                                <SelectTrigger className="h-8 rounded-xl bg-white text-xs">
-                                  <SelectValue placeholder="Set status" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {OPPORTUNITY_ACTION_OPTIONS.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                  No open opportunities need attention right now.
-                </div>
-              ) : snoozedOpportunityItems.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[620px] text-sm">
-                    <tbody>
-                      {snoozedOpportunityItems.map((item) => (
-                        <tr key={item.key} className="border-t border-slate-200 first:border-t-0">
-                          <td className="px-4 py-2.5">
-                            <div className="font-semibold text-slate-950">{item.companyName}</div>
-                            <div className="text-slate-500">{item.subtitle}</div>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">
-                                Snoozed until {formatActionDate(item.snoozedUntil ?? "")}
-                              </Badge>
-                              <Button variant="ghost" className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700" onClick={() => handleUnsnooze(item.key)}>
-                                <RotateCcw className="mr-2 size-4" />
-                                Unsnooze
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                  No snoozed opportunities right now.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="flex min-h-0 flex-col overflow-hidden rounded-[1.6rem] border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-200 bg-slate-50/70">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle>Prospects</CardTitle>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Potential customers not yet converted into active accounts.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
-                    {activeProspectItems.length} open
-                  </Badge>
-                  <Tabs value={prospectView} onValueChange={(value) => setProspectView(value as "open" | "snoozed")}>
-                    <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
-                      <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
-                      <TabsTrigger value="snoozed" className="rounded-lg">Snoozed</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="min-h-0 overflow-y-auto p-0">
-              {prospectView === "open" ? activeProspectItems.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[840px] text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-                      <tr>
-                        <th className="px-5 py-3 font-semibold">Company</th>
-                        <th className="px-5 py-3 font-semibold">Contact</th>
-                        <th className="px-5 py-3 font-semibold">Opportunity</th>
-                        <th className="px-5 py-3 font-semibold">Last Contacted</th>
-                        <th className="px-5 py-3 font-semibold">Status</th>
-                        <th className="px-4 py-2.5 font-semibold">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeProspectItems.map((item) => (
-                        <tr key={item.key} className="group border-t border-slate-200 transition hover:bg-slate-50/80">
-                          <td className="px-4 py-3">
-                            <button type="button" className="text-left" onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}>
-                              <div className="font-semibold text-slate-950 transition group-hover:text-sky-800">{item.companyName}</div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={cn(
+                                    "inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold",
+                                    item.kind === "prospect"
+                                      ? "bg-violet-100 text-violet-700"
+                                      : "bg-sky-100 text-sky-700",
+                                  )}
+                                >
+                                  {item.kind === "prospect" ? "P" : "O"}
+                                </span>
+                                <span className="font-semibold text-slate-950 transition group-hover:text-sky-800">
+                                  {item.companyName}
+                                </span>
+                              </div>
                             </button>
                           </td>
                           <td className="px-4 py-3 text-slate-700">{item.contactName}</td>
@@ -1193,15 +999,15 @@ export default function SalesWorkspace() {
                             ) : null}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="min-w-[210px]">
+                            <div className="flex items-center gap-2">
                               <Select
                                 key={`${item.key}-${item.statusLabel}`}
                                 onValueChange={(value: OpportunityActionType) => {
                                   handleChoosePipelineAction(item, value);
                                 }}
                               >
-                                <SelectTrigger className="h-8 rounded-xl bg-white text-xs">
-                                  <SelectValue placeholder="Set status" />
+                                <SelectTrigger className="h-7 w-auto min-w-0 rounded-lg bg-white px-2.5 text-[11px]">
+                                  <SelectValue placeholder="Update" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {OPPORTUNITY_ACTION_OPTIONS.map((option) => (
@@ -1220,37 +1026,7 @@ export default function SalesWorkspace() {
                 </div>
               ) : (
                 <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                  No prospects need attention right now.
-                </div>
-              ) : snoozedProspectItems.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[620px] text-sm">
-                    <tbody>
-                      {snoozedProspectItems.map((item) => (
-                        <tr key={item.key} className="border-t border-slate-200 first:border-t-0">
-                          <td className="px-4 py-2.5">
-                            <div className="font-semibold text-slate-950">{item.companyName}</div>
-                            <div className="text-slate-500">{item.subtitle}</div>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">
-                                Snoozed until {formatActionDate(item.snoozedUntil ?? "")}
-                              </Badge>
-                              <Button variant="ghost" className="h-8 rounded-xl px-3 text-xs text-slate-600 hover:text-sky-700" onClick={() => handleUnsnooze(item.key)}>
-                                <RotateCcw className="mr-2 size-4" />
-                                Unsnooze
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="m-5 rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                  No snoozed prospects right now.
+                  No pipeline items match this view right now.
                 </div>
               )}
             </CardContent>
@@ -1260,48 +1036,42 @@ export default function SalesWorkspace() {
               <CardHeader className="border-b border-slate-200 bg-slate-50/70">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <CardTitle>Action Points</CardTitle>
+                    <CardTitle>Work</CardTitle>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Action points and tasks in one shared queue. Everything remains visible to everyone.
+                    </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
                       {dashboardMetrics.dueToday} due today
                     </Badge>
-                    <Tabs value={actionPointView} onValueChange={(value) => setActionPointView(value as "open" | "completed")}>
+                    <Tabs value={workView} onValueChange={(value) => setWorkView(value as "open" | "completed")}>
                       <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
                         <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
                         <TabsTrigger value="completed" className="rounded-lg">Completed</TabsTrigger>
                       </TabsList>
                     </Tabs>
-                    <Button className="rounded-xl bg-sky-600 hover:bg-sky-700" onClick={() => setActionPointOpen(true)}>
+                    <Button className="rounded-xl bg-sky-600 hover:bg-sky-700" onClick={() => setTaskOpen(true)}>
                       <Plus className="mr-2 size-4" />
-                      Add action point
+                      New task
                     </Button>
                   </div>
                 </div>
-                <div className="relative mt-4 max-w-sm">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    type="search"
-                    value={actionPointSearch}
-                    onChange={(event) => setActionPointSearch(event.target.value)}
-                    placeholder="Search action points, customers, or prospects"
-                    className="h-10 rounded-xl bg-white pl-9"
-                  />
-                </div>
               </CardHeader>
               <CardContent className="min-h-0 space-y-2 overflow-y-auto p-4">
-                {actionPointView === "open" ? (
-                  visibleOpenActionPoints.length > 0 ? (
-                    visibleOpenActionPoints.map((item) => {
+                {filteredWorkItems.length > 0 ? (
+                    filteredWorkItems.map((item) => {
                       const dueMeta = getDueMeta(item.dueDate);
                       return (
                       <div
-                        key={item.id}
+                        key={item.key}
                         className={cn(
                           "rounded-[1.15rem] border p-3 transition",
                           item.completed
                             ? "border-slate-200 bg-slate-50/80"
-                            : "border-slate-200 bg-white hover:border-sky-200",
+                            : item.source === "action_point"
+                              ? "border-slate-200 bg-white hover:border-sky-200"
+                              : "border-slate-200 bg-white hover:border-violet-200",
                         )}
                       >
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1310,7 +1080,13 @@ export default function SalesWorkspace() {
                               <button
                                 type="button"
                                 className="mt-0.5 text-slate-400 hover:text-sky-600"
-                                onClick={() => handleToggleActionPoint(item.id)}
+                                onClick={() => {
+                                  if (item.source === "action_point") {
+                                    handleToggleActionPoint(item.id);
+                                  } else {
+                                    handleToggleTask(item.id);
+                                  }
+                                }}
                                 aria-label={item.completed ? `Reopen ${item.title}` : `Mark ${item.title} done`}
                               >
                                 {item.completed ? (
@@ -1331,20 +1107,37 @@ export default function SalesWorkspace() {
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
                                   <Badge
                                     variant="outline"
-                                    className={cn("text-[11px]", getActionPointAccountTypeBadgeClasses(item.customerStatus))}
+                                    className={cn("text-[11px]", getWorkSourceBadgeClasses(item.source))}
                                   >
-                                    {getActionPointAccountTypeLabel(item.customerStatus)}
+                                    {getWorkSourceLabel(item.source)}
                                   </Badge>
+                                  {item.priority ? (
+                                    <Badge variant="outline" className={cn("text-[11px]", getPriorityBadgeClasses(item.priority))}>
+                                      {item.priority}
+                                    </Badge>
+                                  ) : null}
+                                  {item.relatedCustomerStatus ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={cn("text-[11px]", getActionPointAccountTypeBadgeClasses(item.relatedCustomerStatus))}
+                                  >
+                                    {getActionPointAccountTypeLabel(item.relatedCustomerStatus)}
+                                  </Badge>
+                                  ) : null}
+                                  {item.relatedCustomerId && item.relatedCustomerName ? (
                                   <span>
-                                    Related {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}:{" "}
+                                    Related {getActionPointAccountTypeLabel(item.relatedCustomerStatus ?? "active").toLowerCase()}:{" "}
                                     <button
                                       type="button"
                                       className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
-                                      onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
+                                      onClick={() => handleOpenCustomerFromWorkspace(item.relatedCustomerId!)}
                                     >
-                                      {item.customerName}
+                                      {item.relatedCustomerName}
                                     </button>
                                   </span>
+                                  ) : (
+                                    <span>General shared task</span>
+                                  )}
                                 </div>
                                 {item.details ? <p className="mt-2 text-xs leading-5 text-slate-600">{item.details}</p> : null}
                               </div>
@@ -1355,25 +1148,29 @@ export default function SalesWorkspace() {
                               <Clock3 className="mr-1 size-3.5" />
                               {dueMeta.dueLabel}
                             </Badge>
-                            <Button
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
-                            >
-                              Open {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}
-                              <ArrowUpRight className="ml-2 size-4" />
-                            </Button>
+                            {item.relatedCustomerId && item.relatedCustomerStatus ? (
+                              <Button
+                                variant="outline"
+                                className="rounded-xl"
+                                onClick={() => handleOpenCustomerFromWorkspace(item.relatedCustomerId!)}
+                              >
+                                Open {getActionPointAccountTypeLabel(item.relatedCustomerStatus).toLowerCase()}
+                                <ArrowUpRight className="ml-2 size-4" />
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       </div>
                       );
                     })
-                  ) : (
-                    <div className="rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                      No open action points match right now. Use the add action point button to create one tied to a customer or prospect.
-                    </div>
-                  )
-                ) : visibleCompletedActionPoints.length > 0 ? (
+                ) : (
+                  <div className="rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+                    {workView === "open"
+                      ? "No open work items match right now. Add an action point or task to keep the queue moving."
+                      : "No completed work items match right now."}
+                  </div>
+                )}
+                {workView === "completed" && completedActionPointCount > 0 ? (
                   <>
                     <div className="flex justify-end">
                       <Button
@@ -1383,179 +1180,41 @@ export default function SalesWorkspace() {
                         onClick={handleClearCompletedActionPoints}
                       >
                         <Trash2 className="mr-2 size-4" />
-                        Clear completed
+                        Clear completed action points
                       </Button>
                     </div>
-                    {visibleCompletedActionPoints.map((item) => {
-                      const dueMeta = getDueMeta(item.dueDate);
-                      return (
-                      <div key={item.id} className="rounded-[1.15rem] border border-slate-200 bg-white p-3">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex items-start gap-3">
-                              <button
-                                type="button"
-                                className="mt-0.5 text-slate-400 hover:text-sky-600"
-                                onClick={() => handleToggleActionPoint(item.id)}
-                                aria-label={`Reopen ${item.title}`}
-                              >
-                                <CheckCircle2 className="size-5 text-emerald-600" />
-                              </button>
-                              <div className="min-w-0">
-                                <div className="font-semibold text-slate-500 line-through">{item.title}</div>
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                                  <Badge
-                                    variant="outline"
-                                    className={cn("text-[11px]", getActionPointAccountTypeBadgeClasses(item.customerStatus))}
-                                  >
-                                    {getActionPointAccountTypeLabel(item.customerStatus)}
-                                  </Badge>
-                                  <span>
-                                    Related {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}:{" "}
-                                    <button
-                                      type="button"
-                                      className="cursor-pointer font-medium text-sky-700 transition hover:-translate-y-0.5 hover:text-sky-800"
-                                      onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
-                                    >
-                                      {item.customerName}
-                                    </button>
-                                  </span>
-                                </div>
-                                {item.details ? <p className="mt-2 text-xs leading-5 text-slate-600">{item.details}</p> : null}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 flex-wrap items-center gap-2">
-                            <Badge variant="outline" className={getDueBadgeClasses(dueMeta.dueType)}>
-                              <Clock3 className="mr-1 size-3.5" />
-                              {dueMeta.dueLabel}
-                            </Badge>
-                            <Button
-                              variant="outline"
-                              className="rounded-xl"
-                              onClick={() => handleOpenCustomerFromWorkspace(item.customerId)}
-                            >
-                              Open {getActionPointAccountTypeLabel(item.customerStatus).toLowerCase()}
-                              <ArrowUpRight className="ml-2 size-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                      );
-                    })}
                   </>
-                ) : (
-                  <div className="rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                    No completed action points yet.
-                  </div>
-                )}
+                ) : null}
               </CardContent>
-            </Card>
-
-          <Card className="flex min-h-0 flex-col rounded-[1.6rem] border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-200 bg-slate-50/70">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle>Tasks</CardTitle>
-                  <p className="mt-1 text-sm text-slate-600">
-                    General to-dos that do not need to be attached to a customer.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                  <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                    {openTasks.length} open
-                  </Badge>
-                  <Tabs value={taskView} onValueChange={(value) => setTaskView(value as "open" | "completed")}>
-                    <TabsList className="h-9 rounded-xl bg-slate-100 p-1">
-                      <TabsTrigger value="open" className="rounded-lg">Open</TabsTrigger>
-                      <TabsTrigger value="completed" className="rounded-lg">Completed</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                  <Button variant="outline" className="rounded-xl" onClick={() => setTaskOpen(true)}>
-                    <Plus className="mr-2 size-4" />
-                    Add task
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="min-h-0 space-y-2 overflow-y-auto p-4">
-              {(taskView === "open" ? openTasks : completedTasks).map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => handleToggleTask(task.id)}
-                  className="flex w-full items-start gap-3 rounded-[1.15rem] border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-200"
-                >
-                  <span className="mt-0.5">
-                    {task.completed ? (
-                      <CheckCircle2 className="size-5 text-emerald-600" />
-                    ) : (
-                      <Circle className="size-5 text-slate-400" />
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className={cn(
-                        "font-semibold text-slate-950",
-                        task.completed && "text-slate-500 line-through",
-                      )}
-                    >
-                      {task.title}
-                    </div>
-                    {task.notes ? (
-                      <p className="mt-1 text-xs leading-5 text-slate-600">{task.notes}</p>
-                    ) : null}
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "shrink-0",
-                      task.priority === "high"
-                        ? "border-rose-200 bg-rose-50 text-rose-700"
-                        : task.priority === "low"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-amber-200 bg-amber-50 text-amber-700",
-                    )}
-                  >
-                    {task.completed ? "Done" : "Mark as done"}
-                  </Badge>
-                </button>
-              ))}
-              {(taskView === "open" ? openTasks : completedTasks).length === 0 ? (
-                <div className="rounded-[1.15rem] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-                  {taskView === "open" ? "No open tasks right now." : "No completed tasks yet."}
-                </div>
-              ) : null}
-            </CardContent>
           </Card>
         </div>
 
-        <Dialog open={actionPointOpen} onOpenChange={setActionPointOpen}>
+        <Dialog open={taskOpen} onOpenChange={setTaskOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add action point</DialogTitle>
+              <DialogTitle>New task</DialogTitle>
               <DialogDescription>
-                Create a follow-up tied to a customer or prospect so the rep can jump straight into the account.
+                Create a shared task, or optionally attach it to a customer/prospect to save it as an action point.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Title</label>
+                <label className="text-sm font-medium text-slate-900">Task title</label>
                 <Input
-                  value={newActionPoint.title}
-                  onChange={(event) => setNewActionPoint((current) => ({ ...current, title: event.target.value }))}
-                  placeholder="Call customer about quote approval"
+                  value={newTask.title}
+                  onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Upload the updated EKGx sell sheet"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Related customer or prospect</label>
-                <Popover open={actionPointTargetOpen} onOpenChange={setActionPointTargetOpen}>
+                <label className="text-sm font-medium text-slate-900">Customer or prospect (optional)</label>
+                <Popover open={taskTargetOpen} onOpenChange={setTaskTargetOpen}>
                   <PopoverTrigger asChild>
                     <Button type="button" variant="outline" role="combobox" className="w-full justify-between overflow-hidden">
                       <span className="truncate">
-                        {selectedActionPointTarget
-                          ? `${selectedActionPointTarget.companyName || selectedActionPointTarget.name} · ${getActionPointAccountTypeLabel(selectedActionPointTarget.status)}`
-                          : "Search customers or prospects"}
+                        {selectedTaskTarget
+                          ? `${selectedTaskTarget.companyName || selectedTaskTarget.name} · ${getActionPointAccountTypeLabel(selectedTaskTarget.status)}`
+                          : "No customer linked"}
                       </span>
                     </Button>
                   </PopoverTrigger>
@@ -1564,6 +1223,15 @@ export default function SalesWorkspace() {
                       <CommandInput placeholder="Search customers or prospects..." />
                       <CommandList className="max-h-72">
                         <CommandEmpty>No matching customers or prospects.</CommandEmpty>
+                        <CommandItem
+                          value="no customer linked clear"
+                          onSelect={() => {
+                            setNewTask((current) => ({ ...current, customerId: "" }));
+                            setTaskTargetOpen(false);
+                          }}
+                        >
+                          <div className="font-medium text-slate-900">No customer linked</div>
+                        </CommandItem>
                         {actionPointTargets.map((customer) => (
                           <CommandItem
                             key={customer.id}
@@ -1575,8 +1243,8 @@ export default function SalesWorkspace() {
                               getActionPointAccountTypeLabel(customer.status),
                             ].join(" ")}
                             onSelect={() => {
-                              setNewActionPoint((current) => ({ ...current, customerId: String(customer.id) }));
-                              setActionPointTargetOpen(false);
+                              setNewTask((current) => ({ ...current, customerId: String(customer.id) }));
+                              setTaskTargetOpen(false);
                             }}
                           >
                             <div className="min-w-0">
@@ -1597,50 +1265,6 @@ export default function SalesWorkspace() {
                 </Popover>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Due date</label>
-                <Input
-                  type="date"
-                  value={newActionPoint.dueDate}
-                  onChange={(event) => setNewActionPoint((current) => ({ ...current, dueDate: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Details</label>
-                <Textarea
-                  value={newActionPoint.details}
-                  onChange={(event) => setNewActionPoint((current) => ({ ...current, details: event.target.value }))}
-                  placeholder="Capture the exact follow-up so it is easy to finish and mark done."
-                  className="min-h-24"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setActionPointOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleCreateActionPoint}>Add action point</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={taskOpen} onOpenChange={setTaskOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add task</DialogTitle>
-              <DialogDescription>
-                Add a personal workspace task that can be marked done directly from the card.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Task title</label>
-                <Input
-                  value={newTask.title}
-                  onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
-                  placeholder="Upload the updated EKGx sell sheet"
-                />
-              </div>
-              <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-900">Notes</label>
                 <Textarea
                   value={newTask.notes}
@@ -1649,6 +1273,16 @@ export default function SalesWorkspace() {
                   className="min-h-24"
                 />
               </div>
+              {newTask.customerId ? (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-900">Due date</label>
+                  <Input
+                    type="date"
+                    value={newTask.dueDate}
+                    onChange={(event) => setNewTask((current) => ({ ...current, dueDate: event.target.value }))}
+                  />
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-900">Priority</label>
                 <Select
@@ -1672,7 +1306,7 @@ export default function SalesWorkspace() {
               <Button variant="outline" onClick={() => setTaskOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleCreateTask}>Add task</Button>
+              <Button onClick={handleCreateTask}>{newTask.customerId ? "Create action point" : "Create task"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1800,48 +1434,6 @@ export default function SalesWorkspace() {
           </DialogContent>
         </Dialog>
 
-        <Dialog
-          open={Boolean(snoozeTarget)}
-          onOpenChange={(open) => {
-            if (!open) {
-              setSnoozeTarget(null);
-              setSnoozeDate("");
-            }
-          }}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Snooze dashboard item</DialogTitle>
-              <DialogDescription>
-                Hide this {snoozeTarget?.kind ?? "pipeline"} item from the Daily Command Center until the selected date. It will automatically reappear on that day.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="font-semibold text-slate-950">{snoozeTarget?.title}</div>
-                <div className="mt-1 text-sm text-slate-600">{snoozeTarget?.companyName}</div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Show it again on</label>
-                <Input type="date" value={snoozeDate} min={todayDateValue} onChange={(event) => setSnoozeDate(event.target.value)} />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSnoozeTarget(null);
-                  setSnoozeDate("");
-                }}
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleSaveSnooze} disabled={!snoozeDate}>
-                Save snooze
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </AppLayout>
   );

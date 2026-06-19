@@ -280,7 +280,12 @@ export function AppLayout({ children, fluid = false, scrollContent = true, heade
 
       <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)]">
         <div className="relative z-[1200] border-b border-slate-200/90 bg-white/95 px-4 py-3 backdrop-blur md:px-6">
-          <div className="relative mx-auto flex max-w-[1400px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div
+            className={cn(
+              "relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between",
+              fluid ? "mx-0 w-full max-w-none" : "mx-auto max-w-[1400px]",
+            )}
+          >
             {headerContent ? <div className="min-w-0 flex-1">{headerContent}</div> : null}
             <div className="flex w-full flex-col gap-3 md:w-auto md:min-w-[34rem] md:flex-row md:items-center md:justify-end">
               <GlobalSearch />
