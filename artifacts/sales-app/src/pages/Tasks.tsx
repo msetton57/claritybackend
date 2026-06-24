@@ -221,7 +221,7 @@ export default function Tasks() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ taskId, completed }: { taskId: number; completed: boolean }) =>
-      updateCollaborationTask(taskId, completed),
+      updateCollaborationTask(taskId, { completed }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["collaboration", "tasks"] });
     },

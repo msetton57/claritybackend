@@ -40,6 +40,14 @@ export interface TaskInput {
   category: CollaborativeTask["category"];
 }
 
+export interface TaskUpdateInput {
+  title?: string;
+  notes?: string | null;
+  priority?: CollaborativeTask["priority"];
+  category?: CollaborativeTask["category"];
+  completed?: boolean;
+}
+
 export interface CollaborationTaskQueryOptions {
   scope?: "visible" | "all";
 }
@@ -69,15 +77,21 @@ export function createCollaborationTask(input: TaskInput) {
   });
 }
 
-export function updateCollaborationTask(taskId: number, completed: boolean) {
+export function updateCollaborationTask(taskId: number, updates: TaskUpdateInput) {
   return fetchJson<void>(`/api/collaboration/tasks/${taskId}`, {
     method: "PATCH",
-    body: JSON.stringify({ completed }),
+    body: JSON.stringify(updates),
   });
 }
 
 export function deleteCollaborationTask(taskId: number) {
   return fetchJson<void>(`/api/collaboration/tasks/${taskId}`, {
+    method: "DELETE",
+  });
+}
+
+export function clearCompletedCollaborationTasks() {
+  return fetchJson<void>("/api/collaboration/tasks/completed", {
     method: "DELETE",
   });
 }

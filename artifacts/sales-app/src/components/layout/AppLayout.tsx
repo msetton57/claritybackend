@@ -17,6 +17,7 @@ import {
   CircleCheckBig,
   ShieldCheck,
   Users,
+  ActivitySquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,12 @@ export function AppLayout({ children, fluid = false, scrollContent = true, heade
           label: "Customer Hub",
           icon: Users,
           activePaths: ["/customers"],
+        },
+        {
+          href: "/ekgx-leads",
+          label: "EKGx Leads",
+          icon: ActivitySquare,
+          activePaths: ["/ekgx-leads"],
         },
       ],
     },

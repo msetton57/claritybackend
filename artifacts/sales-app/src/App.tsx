@@ -11,6 +11,7 @@ import CustomerDetail from "@/pages/CustomerDetail";
 import Customers from "@/pages/Customers";
 import CustomerCrmDetail from "@/pages/CustomerCrmDetail";
 import CustomerAccountPricing from "@/pages/CustomerAccountPricing";
+import EkgxLeads from "@/pages/EkgxLeads";
 import EkgxLeadDetail from "@/pages/EkgxLeadDetail";
 import ArAging from "@/pages/ArAging";
 import OrdersHome from "@/pages/OrdersHome";
@@ -35,6 +36,8 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/customers" component={Customers} />
+      <Route path="/ekgx-leads" component={EkgxLeads} />
+      <Route path="/ekgx-leads/:leadId" component={EkgxLeadDetail} />
       <Route path="/customers/ekgx-leads/:leadId" component={EkgxLeadDetail} />
       <Route path="/customers/:customerId/pricing" component={CustomerAccountPricing} />
       <Route path="/customers/:customerId" component={CustomerCrmDetail} />

@@ -28,7 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { setCustomerFlag, useCustomerFlags, useEkgxLeads, type EkgxLeadStatus, type EkgxLeadView } from "@/lib/beta-persistence";
+import { setCustomerFlag, useCustomerFlags } from "@/lib/beta-persistence";
 import { getCustomers, type CustomerListItem, type CustomerStatus } from "@/lib/customer-crm";
 import {
   createOpportunity,
@@ -47,7 +47,6 @@ type CustomerCohort =
   | "active"
   | "prospect"
   | "parked"
-  | "ekgx_leads"
   | "opportunities";
 type OpportunityView = "open" | "won" | "lost" | "all";
 
@@ -139,16 +138,6 @@ function formatOpportunityDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00`));
 }
 
-function formatLeadStatus(status: EkgxLeadStatus) {
-  return status === "contacted" ? "Contacted" : "Not contacted";
-}
-
-function getLeadStatusBadgeClass(status: EkgxLeadStatus) {
-  return status === "contacted"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-    : "border-amber-200 bg-amber-50 text-amber-700";
-}
-
 function getOpportunityLifecycleClass(lifecycle: SalesOpportunity["lifecycle"]) {
   if (lifecycle === "won") {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -238,7 +227,6 @@ export default function Customers() {
   const [opportunityForm, setOpportunityForm] = useState(() => getDefaultOpportunityForm());
   const [editingOpportunityId, setEditingOpportunityId] = useState<number | null>(null);
   const [opportunityView, setOpportunityView] = useState<OpportunityView>("open");
-  const [ekgxLeadView, setEkgxLeadView] = useState<EkgxLeadView>("all");
   const deferredSearch = useDeferredValue(search.trim());
   const isProspectDraft = createForm.status === "prospect";
   const isNewOpportunityCustomer = opportunityForm.mode === "new";
@@ -248,7 +236,6 @@ export default function Customers() {
     queryFn: () => getCustomers({ q: deferredSearch || undefined }),
   });
   const customerFlagsQuery = useCustomerFlags();
-  const ekgxLeadsQuery = useEkgxLeads();
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities"],
     queryFn: listOpportunities,
@@ -256,7 +243,6 @@ export default function Customers() {
 
   const customers = customersQuery.data ?? [];
   const flaggedIds = customerFlagsQuery.data ?? [];
-  const ekgxLeads = ekgxLeadsQuery.data ?? [];
   const opportunities = useMemo(
     () => sortOpportunitiesByUpdatedAt(opportunitiesQuery.data ?? []),
     [opportunitiesQuery.data],
@@ -280,35 +266,6 @@ export default function Customers() {
       ),
     [opportunities, opportunityView],
   );
-  const ekgxLeadCounts = useMemo(
-    () =>
-      ekgxLeads.reduce(
-        (acc, lead) => {
-          acc.all += 1;
-          acc[lead.status] += 1;
-          return acc;
-        },
-        { all: 0, contacted: 0, not_contacted: 0 },
-      ),
-    [ekgxLeads],
-  );
-  const visibleEkgxLeads = useMemo(() => {
-    const normalizedSearch = deferredSearch.toLowerCase();
-    return [...ekgxLeads]
-      .filter((lead) => (ekgxLeadView === "all" ? true : lead.status === ekgxLeadView))
-      .filter((lead) => {
-        if (!normalizedSearch) return true;
-        return [
-          lead.businessName,
-          lead.contactName,
-          lead.email ?? "",
-          lead.phone ?? "",
-          lead.source,
-        ].some((value) => value.toLowerCase().includes(normalizedSearch));
-      })
-      .sort((left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime());
-  }, [deferredSearch, ekgxLeadView, ekgxLeads]);
-
   const metrics = useMemo(() => {
     return customers.reduce(
       (acc, customer) => {
@@ -339,7 +296,6 @@ export default function Customers() {
     { value: "prospect" as const, label: "Prospects", count: metrics.prospects },
     { value: "parked" as const, label: "Inactive", count: metrics.parked },
     { value: "flagged" as const, label: "Flagged", count: metrics.flagged },
-    { value: "ekgx_leads" as const, label: "EKGX Leads", count: ekgxLeadCounts.all },
     { value: "opportunities" as const, label: "Opportunities", count: opportunityCounts.open },
   ];
 
@@ -370,21 +326,6 @@ export default function Customers() {
       month: "short",
       day: "numeric",
       year: "numeric",
-    }).format(new Date(value));
-  }
-
-  function formatLeadDate(value: string) {
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(new Date(value));
-  }
-
-  function formatLeadTime(value: string) {
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
     }).format(new Date(value));
   }
 
@@ -684,14 +625,6 @@ export default function Customers() {
                       <TabsTrigger value="all" className="rounded-lg">All</TabsTrigger>
                     </TabsList>
                   </Tabs>
-                ) : cohort === "ekgx_leads" ? (
-                  <Tabs value={ekgxLeadView} onValueChange={(value) => setEkgxLeadView(value as EkgxLeadView)}>
-                    <TabsList className="h-12 rounded-xl bg-slate-100 p-1">
-                      <TabsTrigger value="all" className="rounded-lg">All</TabsTrigger>
-                      <TabsTrigger value="not_contacted" className="rounded-lg">Not Contacted</TabsTrigger>
-                      <TabsTrigger value="contacted" className="rounded-lg">Contacted</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
                 ) : null}
               </div>
 
@@ -805,71 +738,6 @@ export default function Customers() {
                     <EmptyTitle>No opportunities in this view</EmptyTitle>
                     <EmptyDescription>
                       Create a new opportunity or switch lifecycle tabs to review won, lost, and active pipeline items.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )
-            ) : cohort === "ekgx_leads" ? (
-              visibleEkgxLeads.length > 0 ? (
-                <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_40px_-34px_rgba(15,23,42,0.5)]">
-                  <Table>
-                    <TableHeader className="bg-slate-50">
-                      <TableRow className="border-slate-200 hover:bg-slate-50">
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Lead</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Contact Name</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Contact Info</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Date</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Time</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Status</TableHead>
-                        <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Source</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleEkgxLeads.map((lead) => (
-                        <TableRow
-                          key={lead.id}
-                          className="cursor-pointer border-slate-200 hover:bg-slate-50/80"
-                          onClick={() => navigate(`/customers/ekgx-leads/${lead.id}`)}
-                        >
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm font-semibold text-slate-950">{lead.businessName}</div>
-                            <div className="text-xs text-slate-500">{lead.flagged ? "Flagged EKGX Facebook lead" : "EKGX Facebook lead"}</div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm font-medium text-slate-900">{lead.contactName}</div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <div className="text-sm text-slate-900">{lead.email || lead.phone || "No contact info"}</div>
-                            <div className="text-xs text-slate-500">
-                              {lead.email && lead.phone ? lead.phone : lead.email ? "Email" : lead.phone ? "Phone" : "Needs follow-up"}
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-4 text-sm text-slate-900">{formatLeadDate(lead.submittedAt)}</TableCell>
-                          <TableCell className="px-4 py-4 text-sm text-slate-900">{formatLeadTime(lead.submittedAt)}</TableCell>
-                          <TableCell className="px-4 py-4">
-                            <Badge variant="outline" className={getLeadStatusBadgeClass(lead.status)}>
-                              {formatLeadStatus(lead.status)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="px-4 py-4">
-                            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-                              {lead.source}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <Empty className="rounded-[24px] border border-slate-200 bg-white py-16">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <Users className="size-5" />
-                    </EmptyMedia>
-                    <EmptyTitle>No EKGX leads in this view</EmptyTitle>
-                    <EmptyDescription>
-                      Try a different search or switch between contacted and not contacted Facebook leads.
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>

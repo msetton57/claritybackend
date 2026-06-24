@@ -55,9 +55,18 @@ function formatEkgxLead(lead: typeof ekgxLeadsTable.$inferSelect) {
     contactName: lead.contactName,
     email: lead.email ?? null,
     phone: lead.phone ?? null,
+    country: lead.country ?? null,
+    jobTitle: lead.jobTitle ?? null,
+    businessType: lead.businessType ?? null,
+    locations: lead.locations ?? null,
+    state: lead.state ?? null,
+    role: lead.role ?? null,
+    intendedUse: lead.intendedUse ?? null,
+    purchaseTimeline: lead.purchaseTimeline ?? null,
+    callbackPreference: lead.callbackPreference ?? null,
     submittedAt: lead.submittedAt.toISOString(),
     status: lead.status as "contacted" | "not_contacted",
-    source: lead.source as "Facebook",
+    source: lead.source,
     notes: lead.notes,
     lastContactAt: lead.lastContactAt?.toISOString() ?? null,
     lastContactSummary: lead.lastContactSummary ?? null,
@@ -279,7 +288,7 @@ router.patch("/crm/action-points/:id", async (req, res): Promise<void> => {
       completed: parsed.data.completed,
       updatedAt: new Date(),
     })
-    .where(and(eq(workspaceActionPointsTable.id, id), eq(workspaceActionPointsTable.userId, currentUser.id)))
+    .where(eq(workspaceActionPointsTable.id, id))
     .returning();
 
   if (!updated) {
@@ -306,7 +315,7 @@ router.delete("/crm/action-points/completed", async (req, res): Promise<void> =>
 
   await db
     .delete(workspaceActionPointsTable)
-    .where(and(eq(workspaceActionPointsTable.userId, currentUser.id), eq(workspaceActionPointsTable.completed, true)));
+    .where(eq(workspaceActionPointsTable.completed, true));
 
   res.status(204).send();
 });

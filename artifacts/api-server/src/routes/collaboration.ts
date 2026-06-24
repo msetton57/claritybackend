@@ -35,9 +35,17 @@ const createTaskBodySchema = z.object({
   category: taskCategorySchema,
 });
 
-const updateTaskBodySchema = z.object({
-  completed: z.boolean(),
-});
+const updateTaskBodySchema = z
+  .object({
+    title: z.string().trim().min(1).max(160).optional(),
+    notes: nullableTextField.optional(),
+    priority: taskPrioritySchema.optional(),
+    category: taskCategorySchema.optional(),
+    completed: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one task field must be provided",
+  });
 
 const createPosterBodySchema = z.object({
   postType: posterTypeSchema,
@@ -283,15 +291,71 @@ router.patch("/collaboration/tasks/:id", async (req, res): Promise<void> => {
     return void res.status(403).json({ error: "You do not have access to this task" });
   }
 
+  const updates: Partial<typeof collaborativeTasksTable.$inferInsert> = {
+    updatedAt: new Date(),
+  };
+
+  if ("title" in parsed.data && typeof parsed.data.title === "string") {
+    updates.title = parsed.data.title;
+  }
+
+  if ("notes" in parsed.data) {
+    updates.notes = parsed.data.notes ?? null;
+  }
+
+  if ("priority" in parsed.data && parsed.data.priority) {
+    updates.priority = parsed.data.priority;
+  }
+
+  if ("category" in parsed.data && parsed.data.category) {
+    updates.category = parsed.data.category;
+  }
+
+  if ("completed" in parsed.data && typeof parsed.data.completed === "boolean") {
+    updates.completed = parsed.data.completed;
+    updates.completedAt = parsed.data.completed ? new Date() : null;
+    updates.completedByUserId = parsed.data.completed ? currentUser.id : null;
+  }
+
   await db
     .update(collaborativeTasksTable)
-    .set({
-      completed: parsed.data.completed,
-      completedAt: parsed.data.completed ? new Date() : null,
-      completedByUserId: parsed.data.completed ? currentUser.id : null,
-      updatedAt: new Date(),
-    })
+    .set(updates)
     .where(eq(collaborativeTasksTable.id, taskId));
+
+  res.status(204).send();
+});
+
+router.delete("/collaboration/tasks/completed", async (req, res): Promise<void> => {
+  const currentUser = await requireAuthenticatedUser(req, res);
+
+  if (!currentUser) {
+    return;
+  }
+
+  const completedTasks = await db
+    .select({ id: collaborativeTasksTable.id })
+    .from(collaborativeTasksTable)
+    .where(
+      currentUser.role === "admin"
+        ? eq(collaborativeTasksTable.completed, true)
+        : and(
+            eq(collaborativeTasksTable.completed, true),
+            or(
+              eq(collaborativeTasksTable.createdByUserId, currentUser.id),
+              sql`exists (
+                select 1 from ${taskAssignmentsTable}
+                where ${taskAssignmentsTable.taskId} = ${collaborativeTasksTable.id}
+                and ${taskAssignmentsTable.userId} = ${currentUser.id}
+              )`,
+            ),
+          ),
+    );
+
+  if (completedTasks.length > 0) {
+    await db
+      .delete(collaborativeTasksTable)
+      .where(inArray(collaborativeTasksTable.id, completedTasks.map((task) => task.id)));
+  }
 
   res.status(204).send();
 });

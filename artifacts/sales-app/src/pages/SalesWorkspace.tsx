@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import {
   type WorkspaceActionPoint,
 } from "@/lib/beta-persistence";
 import {
+  clearCompletedCollaborationTasks,
   createCollaborationTask,
   updateCollaborationTask,
   useCollaborationTasks,
@@ -48,6 +50,7 @@ import {
   type CustomerListItem,
   type SalesRepOption,
 } from "@/lib/customer-crm";
+import { useCurrentUser } from "@/lib/users";
 import {
   listOpportunities,
   formatOpportunityStatus,
@@ -118,6 +121,7 @@ type UnifiedWorkItem = {
   relatedCustomerStatus: CustomerListItem["status"] | WorkspaceActionPoint["customerStatus"] | null;
   dueDate: string | null;
   priority: TodoTask["priority"] | null;
+  createdByUserId: number | null;
 };
 
 type ContactLogTarget = {
@@ -133,6 +137,26 @@ type ContactDetailTarget = {
   title: string;
   meta: OpportunityContactMeta;
 };
+
+type TaskDialogMode = "create" | "edit-task";
+
+type TaskFormState = {
+  title: string;
+  notes: string;
+  priority: TodoTask["priority"];
+  customerId: string;
+  dueDate: string;
+};
+
+function createEmptyTaskForm(): TaskFormState {
+  return {
+    title: "",
+    notes: "",
+    priority: "high",
+    customerId: "",
+    dueDate: "",
+  };
+}
 
 function getStageLabel(customer: CustomerListItem) {
   if (customer.email && customer.phone) {
@@ -457,6 +481,7 @@ export default function SalesWorkspace() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
   const customersQuery = useQuery({
     queryKey: ["customers-crm", "sales-workspace"],
     queryFn: () => getCustomers({}),
@@ -500,6 +525,8 @@ export default function SalesWorkspace() {
   const [pipelineView, setPipelineView] = useState<"all" | "prospect" | "opportunity">("all");
   const [workView, setWorkView] = useState<"open" | "completed">("open");
   const [taskOpen, setTaskOpen] = useState(false);
+  const [taskDialogMode, setTaskDialogMode] = useState<TaskDialogMode>("create");
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [taskTargetOpen, setTaskTargetOpen] = useState(false);
   const [contactLogOpen, setContactLogOpen] = useState(false);
   const [contactDetailOpen, setContactDetailOpen] = useState(false);
@@ -508,13 +535,7 @@ export default function SalesWorkspace() {
   );
   const [contactLogTarget, setContactLogTarget] = useState<ContactLogTarget | null>(null);
   const [selectedContactDetail, setSelectedContactDetail] = useState<ContactDetailTarget | null>(null);
-  const [newTask, setNewTask] = useState({
-    title: "",
-    notes: "",
-    priority: "high" as TodoTask["priority"],
-    customerId: "",
-    dueDate: "",
-  });
+  const [newTask, setNewTask] = useState<TaskFormState>(() => createEmptyTaskForm());
   const [contactLogAction, setContactLogAction] = useState<OpportunityActionType>("call");
   const [contactLogSalesRepId, setContactLogSalesRepId] = useState("");
   const [contactLogDetails, setContactLogDetails] = useState("");
@@ -602,29 +623,34 @@ export default function SalesWorkspace() {
       toast({ title: "Unable to update action point", description: error.message, variant: "destructive" }),
   });
 
-  const clearCompletedActionPointsMutation = useMutation({
-    mutationFn: clearCompletedWorkspaceActionPoints,
+  const clearCompletedWorkItemsMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all([clearCompletedWorkspaceActionPoints(), clearCompletedCollaborationTasks()]);
+    },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["crm", "action-points"] });
-      toast({ title: "Completed action points cleared" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["crm", "action-points"] }),
+        queryClient.invalidateQueries({ queryKey: ["collaboration", "tasks"] }),
+      ]);
+      toast({ title: "Completed work items cleared" });
     },
     onError: (error: Error) =>
-      toast({ title: "Unable to clear action points", description: error.message, variant: "destructive" }),
+      toast({ title: "Unable to clear completed work", description: error.message, variant: "destructive" }),
   });
+
+  function resetTaskComposer() {
+    setNewTask(createEmptyTaskForm());
+    setEditingTaskId(null);
+    setTaskDialogMode("create");
+    setTaskOpen(false);
+    setTaskTargetOpen(false);
+  }
 
   const createActionPointMutation = useMutation({
     mutationFn: createWorkspaceActionPoint,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["crm", "action-points"] });
-      setNewTask({
-        title: "",
-        notes: "",
-        priority: "high",
-        customerId: "",
-        dueDate: "",
-      });
-      setTaskTargetOpen(false);
-      setTaskOpen(false);
+      resetTaskComposer();
       toast({ title: "Action point added" });
     },
     onError: (error: Error) =>
@@ -633,9 +659,38 @@ export default function SalesWorkspace() {
 
   const toggleTaskMutation = useMutation({
     mutationFn: ({ id, completed }: { id: number; completed: boolean }) =>
-      updateCollaborationTask(id, completed),
+      updateCollaborationTask(id, { completed }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["collaboration", "tasks"] });
+    },
+    onError: (error: Error) =>
+      toast({ title: "Unable to update task", description: error.message, variant: "destructive" }),
+  });
+
+  const updateTaskDetailsMutation = useMutation({
+    mutationFn: ({
+      id,
+      title,
+      notes,
+      priority,
+      category,
+    }: {
+      id: number;
+      title: string;
+      notes: string | null;
+      priority: TodoTask["priority"];
+      category: TodoTask["category"];
+    }) =>
+      updateCollaborationTask(id, {
+        title,
+        notes,
+        priority,
+        category,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["collaboration", "tasks"] });
+      resetTaskComposer();
+      toast({ title: "Task updated" });
     },
     onError: (error: Error) =>
       toast({ title: "Unable to update task", description: error.message, variant: "destructive" }),
@@ -645,15 +700,7 @@ export default function SalesWorkspace() {
     mutationFn: createCollaborationTask,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["collaboration", "tasks"] });
-      setNewTask({
-        title: "",
-        notes: "",
-        priority: "high",
-        customerId: "",
-        dueDate: "",
-      });
-      setTaskOpen(false);
-      setTaskTargetOpen(false);
+      resetTaskComposer();
       toast({ title: "Task added" });
     },
     onError: (error: Error) =>
@@ -769,6 +816,7 @@ export default function SalesWorkspace() {
         relatedCustomerStatus: item.customerStatus,
         dueDate: item.dueDate,
         priority: null,
+        createdByUserId: null,
       })), ...visibleTasks.map((task) => ({
         key: `task:${task.id}`,
         source: "task" as const,
@@ -783,6 +831,7 @@ export default function SalesWorkspace() {
         relatedCustomerStatus: null,
         dueDate: null,
         priority: task.priority,
+        createdByUserId: task.createdBy.id,
       }))].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
     [actionPoints, visibleTasks],
   );
@@ -797,7 +846,7 @@ export default function SalesWorkspace() {
       }),
     [workItems, workView],
   );
-  const completedActionPointCount = workItems.filter((item) => item.source === "action_point" && item.completed).length;
+  const completedWorkItemCount = workItems.filter((item) => item.completed).length;
   const dashboardMetrics = {
     dueToday: workItems.filter((item) => !item.completed && item.dueDate && getDueMeta(item.dueDate).dueType === "today").length,
   };
@@ -808,8 +857,40 @@ export default function SalesWorkspace() {
     toggleActionPointMutation.mutate({ id, completed: !actionPoint.completed });
   }
 
-  function handleClearCompletedActionPoints() {
-    clearCompletedActionPointsMutation.mutate();
+  function handleOpenCreateTask() {
+    setTaskDialogMode("create");
+    setEditingTaskId(null);
+    setNewTask(createEmptyTaskForm());
+    setTaskTargetOpen(false);
+    setTaskOpen(true);
+  }
+
+  function handleOpenEditTask(id: number) {
+    const task = visibleTasks.find((entry) => entry.id === id);
+    if (!task) return;
+
+    setTaskDialogMode("edit-task");
+    setEditingTaskId(task.id);
+    setNewTask({
+      title: task.title,
+      notes: task.notes ?? "",
+      priority: task.priority,
+      customerId: "",
+      dueDate: "",
+    });
+    setTaskTargetOpen(false);
+    setTaskOpen(true);
+  }
+
+  function handleTaskDialogOpenChange(open: boolean) {
+    setTaskOpen(open);
+    if (!open) {
+      resetTaskComposer();
+    }
+  }
+
+  function handleClearCompletedWorkItems() {
+    clearCompletedWorkItemsMutation.mutate();
   }
 
   function handleToggleTask(id: number) {
@@ -821,6 +902,26 @@ export default function SalesWorkspace() {
   function handleCreateTask() {
     const title = newTask.title.trim();
     if (!title) {
+      return;
+    }
+
+    if (taskDialogMode === "edit-task") {
+      if (!editingTaskId) {
+        return;
+      }
+
+      const task = visibleTasks.find((entry) => entry.id === editingTaskId);
+      if (!task) {
+        return;
+      }
+
+      updateTaskDetailsMutation.mutate({
+        id: editingTaskId,
+        title,
+        notes: newTask.notes.trim() || null,
+        priority: newTask.priority,
+        category: task.category,
+      });
       return;
     }
 
@@ -1051,7 +1152,7 @@ export default function SalesWorkspace() {
                         <TabsTrigger value="completed" className="rounded-lg">Completed</TabsTrigger>
                       </TabsList>
                     </Tabs>
-                    <Button className="rounded-xl bg-sky-600 hover:bg-sky-700" onClick={() => setTaskOpen(true)}>
+                    <Button className="rounded-xl bg-sky-600 hover:bg-sky-700" onClick={handleOpenCreateTask}>
                       <Plus className="mr-2 size-4" />
                       New task
                     </Button>
@@ -1062,6 +1163,11 @@ export default function SalesWorkspace() {
                 {filteredWorkItems.length > 0 ? (
                     filteredWorkItems.map((item) => {
                       const dueMeta = getDueMeta(item.dueDate);
+                      const canEditTask =
+                        item.source === "task" &&
+                        !item.completed &&
+                        !!currentUser &&
+                        (currentUser.role === "admin" || currentUser.id === item.createdByUserId);
                       return (
                       <div
                         key={item.key}
@@ -1148,6 +1254,17 @@ export default function SalesWorkspace() {
                               <Clock3 className="mr-1 size-3.5" />
                               {dueMeta.dueLabel}
                             </Badge>
+                            {canEditTask ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="rounded-xl"
+                                onClick={() => handleOpenEditTask(item.id)}
+                              >
+                                <Pencil className="mr-2 size-4" />
+                                Edit
+                              </Button>
+                            ) : null}
                             {item.relatedCustomerId && item.relatedCustomerStatus ? (
                               <Button
                                 variant="outline"
@@ -1170,17 +1287,17 @@ export default function SalesWorkspace() {
                       : "No completed work items match right now."}
                   </div>
                 )}
-                {workView === "completed" && completedActionPointCount > 0 ? (
+                {workView === "completed" && completedWorkItemCount > 0 ? (
                   <>
                     <div className="flex justify-end">
                       <Button
                         type="button"
                         variant="ghost"
                         className="h-8 rounded-xl text-xs text-slate-600 hover:text-rose-700"
-                        onClick={handleClearCompletedActionPoints}
+                        onClick={handleClearCompletedWorkItems}
                       >
                         <Trash2 className="mr-2 size-4" />
-                        Clear completed action points
+                        Clear completed work items
                       </Button>
                     </div>
                   </>
@@ -1189,12 +1306,14 @@ export default function SalesWorkspace() {
           </Card>
         </div>
 
-        <Dialog open={taskOpen} onOpenChange={setTaskOpen}>
+        <Dialog open={taskOpen} onOpenChange={handleTaskDialogOpenChange}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New task</DialogTitle>
+              <DialogTitle>{taskDialogMode === "edit-task" ? "Edit task" : "New task"}</DialogTitle>
               <DialogDescription>
-                Create a shared task, or optionally attach it to a customer/prospect to save it as an action point.
+                {taskDialogMode === "edit-task"
+                  ? "Update the shared task details and save your changes."
+                  : "Create a shared task, or optionally attach it to a customer/prospect to save it as an action point."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -1206,64 +1325,66 @@ export default function SalesWorkspace() {
                   placeholder="Upload the updated EKGx sell sheet"
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-900">Customer or prospect (optional)</label>
-                <Popover open={taskTargetOpen} onOpenChange={setTaskTargetOpen}>
-                  <PopoverTrigger asChild>
-                    <Button type="button" variant="outline" role="combobox" className="w-full justify-between overflow-hidden">
-                      <span className="truncate">
-                        {selectedTaskTarget
-                          ? `${selectedTaskTarget.companyName || selectedTaskTarget.name} · ${getActionPointAccountTypeLabel(selectedTaskTarget.status)}`
-                          : "No customer linked"}
-                      </span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-[min(32rem,var(--radix-popover-trigger-width))] p-0">
-                    <Command>
-                      <CommandInput placeholder="Search customers or prospects..." />
-                      <CommandList className="max-h-72">
-                        <CommandEmpty>No matching customers or prospects.</CommandEmpty>
-                        <CommandItem
-                          value="no customer linked clear"
-                          onSelect={() => {
-                            setNewTask((current) => ({ ...current, customerId: "" }));
-                            setTaskTargetOpen(false);
-                          }}
-                        >
-                          <div className="font-medium text-slate-900">No customer linked</div>
-                        </CommandItem>
-                        {actionPointTargets.map((customer) => (
+              {taskDialogMode === "create" ? (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-900">Customer or prospect (optional)</label>
+                  <Popover open={taskTargetOpen} onOpenChange={setTaskTargetOpen}>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="outline" role="combobox" className="w-full justify-between overflow-hidden">
+                        <span className="truncate">
+                          {selectedTaskTarget
+                            ? `${selectedTaskTarget.companyName || selectedTaskTarget.name} · ${getActionPointAccountTypeLabel(selectedTaskTarget.status)}`
+                            : "No customer linked"}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-[min(32rem,var(--radix-popover-trigger-width))] p-0">
+                      <Command>
+                        <CommandInput placeholder="Search customers or prospects..." />
+                        <CommandList className="max-h-72">
+                          <CommandEmpty>No matching customers or prospects.</CommandEmpty>
                           <CommandItem
-                            key={customer.id}
-                            value={[
-                              customer.companyName,
-                              customer.name,
-                              customer.primaryContact,
-                              customer.email ?? "",
-                              getActionPointAccountTypeLabel(customer.status),
-                            ].join(" ")}
+                            value="no customer linked clear"
                             onSelect={() => {
-                              setNewTask((current) => ({ ...current, customerId: String(customer.id) }));
+                              setNewTask((current) => ({ ...current, customerId: "" }));
                               setTaskTargetOpen(false);
                             }}
                           >
-                            <div className="min-w-0">
-                              <div className="truncate font-medium text-slate-900">
-                                {customer.companyName || customer.name}
-                              </div>
-                              <div className="truncate text-xs text-slate-500">
-                                {[customer.name, customer.primaryContact, getActionPointAccountTypeLabel(customer.status)]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </div>
-                            </div>
+                            <div className="font-medium text-slate-900">No customer linked</div>
                           </CommandItem>
-                        ))}
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              </div>
+                          {actionPointTargets.map((customer) => (
+                            <CommandItem
+                              key={customer.id}
+                              value={[
+                                customer.companyName,
+                                customer.name,
+                                customer.primaryContact,
+                                customer.email ?? "",
+                                getActionPointAccountTypeLabel(customer.status),
+                              ].join(" ")}
+                              onSelect={() => {
+                                setNewTask((current) => ({ ...current, customerId: String(customer.id) }));
+                                setTaskTargetOpen(false);
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-slate-900">
+                                  {customer.companyName || customer.name}
+                                </div>
+                                <div className="truncate text-xs text-slate-500">
+                                  {[customer.name, customer.primaryContact, getActionPointAccountTypeLabel(customer.status)]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </div>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-900">Notes</label>
                 <Textarea
@@ -1303,10 +1424,16 @@ export default function SalesWorkspace() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setTaskOpen(false)}>
+              <Button variant="outline" onClick={() => handleTaskDialogOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleCreateTask}>{newTask.customerId ? "Create action point" : "Create task"}</Button>
+              <Button onClick={handleCreateTask}>
+                {taskDialogMode === "edit-task"
+                  ? "Save changes"
+                  : newTask.customerId
+                    ? "Create action point"
+                    : "Create task"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

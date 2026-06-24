@@ -17,10 +17,12 @@ import authRouter from "./auth";
 import collaborationRouter from "./collaboration";
 import opportunitiesRouter from "./opportunities";
 import betaPersistenceRouter from "./beta-persistence";
+import webhooksRouter from "./webhooks";
 
 const router: IRouter = Router();
 
 router.use(authRouter);
+router.use(webhooksRouter);
 router.use(healthRouter);
 router.use(reportsRouter);
 router.use(customersRouter);
