@@ -2,8 +2,8 @@ import {
   boolean,
   integer,
   pgTable,
-  primaryKey,
   serial,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -54,6 +54,18 @@ export const ekgxLeadsTable = pgTable(
   },
   (table) => [uniqueIndex("ekgx_leads_identity_unique").on(table.businessName, table.contactName, table.submittedAt)],
 );
+
+export const ekgxLeadActivitiesTable = pgTable("ekgx_lead_activities", {
+  id: serial("id").primaryKey(),
+  leadId: integer("lead_id")
+    .notNull()
+    .references(() => ekgxLeadsTable.id, { onDelete: "cascade" }),
+  contactMethod: text("contact_method").notNull(),
+  result: text("result").notNull(),
+  summary: text("summary").notNull(),
+  createdBy: text("created_by").notNull().default("Sales Team"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 export const workspaceActionPointsTable = pgTable("workspace_action_points", {
   id: serial("id").primaryKey(),

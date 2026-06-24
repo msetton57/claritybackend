@@ -4,6 +4,15 @@ import { fetchJson } from "./http";
 export type EkgxLeadStatus = "contacted" | "not_contacted";
 export type EkgxLeadView = "all" | EkgxLeadStatus;
 
+export interface EkgxLeadActivity {
+  id: number;
+  contactMethod: string;
+  result: string;
+  summary: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface EkgxLead {
   id: number;
   businessName: string;
@@ -26,6 +35,31 @@ export interface EkgxLead {
   lastContactAt: string | null;
   lastContactSummary: string | null;
   flagged: boolean;
+  activities: EkgxLeadActivity[];
+}
+
+const EKGX_INQUIRY_SUBJECT = "Your EKGx Inquiry";
+
+export function getEkgxLeadMailto(lead: Pick<EkgxLead, "email" | "contactName">) {
+  if (!lead.email) return null;
+
+  const trimmedName = lead.contactName.trim();
+  const greetingName = trimmedName.length > 0 ? trimmedName : "there";
+  const body = [
+    `Hi ${greetingName},`,
+    "",
+    "Thank you for your interest in EKGx.",
+    "",
+    "I'd be happy to send over pricing, product information, or schedule a quick demonstration so you can see how it works in practice.",
+    "",
+    "Please let me know what would be most helpful, and I'll get it over to you right away.",
+    "",
+    "I look forward to speaking with you.",
+    "",
+    "Best,",
+  ].join("\n");
+
+  return `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(EKGX_INQUIRY_SUBJECT)}&body=${encodeURIComponent(body)}`;
 }
 
 export interface WorkspaceActionPoint {
@@ -75,6 +109,16 @@ export function updateEkgxLead(leadId: number, updates: Partial<Pick<EkgxLead, "
   return fetchJson<EkgxLead>(`/api/crm/ekgx-leads/${leadId}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
+  });
+}
+
+export function createEkgxLeadActivity(
+  leadId: number,
+  payload: Pick<EkgxLeadActivity, "contactMethod" | "result" | "summary">,
+) {
+  return fetchJson<{ lead: EkgxLead; activity: EkgxLeadActivity }>(`/api/crm/ekgx-leads/${leadId}/activities`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

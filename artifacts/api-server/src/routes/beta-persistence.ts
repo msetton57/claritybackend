@@ -6,6 +6,7 @@ import {
   ekgxLeadsTable,
   workspaceActionPointsTable,
 } from "@workspace/db";
+import { ekgxLeadActivitiesTable } from "@workspace/db/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { requireAuthenticatedUser } from "../lib/auth";
@@ -35,6 +36,12 @@ const updateEkgxLeadBodySchema = z.object({
   lastContactSummary: nullableTextField.optional(),
   status: ekgxLeadStatusSchema.optional(),
   flagged: z.boolean().optional(),
+});
+
+const createEkgxLeadActivityBodySchema = z.object({
+  contactMethod: z.string().trim().min(1).max(40),
+  result: z.string().trim().min(1).max(60),
+  summary: z.string().trim().min(1).max(4000),
 });
 
 const createActionPointBodySchema = z.object({
@@ -71,6 +78,17 @@ function formatEkgxLead(lead: typeof ekgxLeadsTable.$inferSelect) {
     lastContactAt: lead.lastContactAt?.toISOString() ?? null,
     lastContactSummary: lead.lastContactSummary ?? null,
     flagged: lead.flagged,
+  };
+}
+
+function formatEkgxLeadActivity(activity: typeof ekgxLeadActivitiesTable.$inferSelect) {
+  return {
+    id: activity.id,
+    contactMethod: activity.contactMethod,
+    result: activity.result,
+    summary: activity.summary,
+    createdBy: activity.createdBy,
+    createdAt: activity.createdAt.toISOString(),
   };
 }
 
@@ -162,7 +180,16 @@ router.get("/crm/ekgx-leads/:leadId", async (req, res): Promise<void> => {
     return void res.status(404).json({ error: "Lead not found" });
   }
 
-  res.json(formatEkgxLead(lead));
+  const activities = await db
+    .select()
+    .from(ekgxLeadActivitiesTable)
+    .where(eq(ekgxLeadActivitiesTable.leadId, leadId))
+    .orderBy(desc(ekgxLeadActivitiesTable.createdAt), desc(ekgxLeadActivitiesTable.id));
+
+  res.json({
+    ...formatEkgxLead(lead),
+    activities: activities.map(formatEkgxLeadActivity),
+  });
 });
 
 router.patch("/crm/ekgx-leads/:leadId", async (req, res): Promise<void> => {
@@ -208,6 +235,57 @@ router.patch("/crm/ekgx-leads/:leadId", async (req, res): Promise<void> => {
   }
 
   res.json(formatEkgxLead(lead));
+});
+
+router.post("/crm/ekgx-leads/:leadId/activities", async (req, res): Promise<void> => {
+  const currentUser = await requireAuthenticatedUser(req, res);
+  if (!currentUser) return;
+
+  const leadId = Number(req.params.leadId);
+  const parsed = createEkgxLeadActivityBodySchema.safeParse(req.body);
+  if (!Number.isInteger(leadId) || leadId <= 0 || !parsed.success) {
+    return void res.status(400).json({
+      error: parsed.success ? "Invalid lead id" : parsed.error.issues[0]?.message ?? "Invalid activity payload",
+    });
+  }
+
+  const [lead] = await db.select().from(ekgxLeadsTable).where(eq(ekgxLeadsTable.id, leadId));
+  if (!lead) {
+    return void res.status(404).json({ error: "Lead not found" });
+  }
+
+  const createdAt = new Date();
+  const [activity] = await db
+    .insert(ekgxLeadActivitiesTable)
+    .values({
+      leadId,
+      contactMethod: parsed.data.contactMethod,
+      result: parsed.data.result,
+      summary: parsed.data.summary,
+      createdBy: currentUser.name,
+      createdAt,
+    })
+    .returning();
+
+  const [updatedLead] = await db
+    .update(ekgxLeadsTable)
+    .set({
+      status: "contacted",
+      lastContactAt: createdAt,
+      lastContactSummary: `[${parsed.data.contactMethod} | ${parsed.data.result}] ${parsed.data.summary}`,
+      updatedAt: createdAt,
+    })
+    .where(eq(ekgxLeadsTable.id, leadId))
+    .returning();
+
+  if (!activity || !updatedLead) {
+    return void res.status(500).json({ error: "Unable to create lead activity" });
+  }
+
+  res.status(201).json({
+    lead: formatEkgxLead(updatedLead),
+    activity: formatEkgxLeadActivity(activity),
+  });
 });
 
 router.get("/crm/action-points", async (req, res): Promise<void> => {

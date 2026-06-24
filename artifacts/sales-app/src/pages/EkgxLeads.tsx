@@ -1,6 +1,6 @@
 import React, { useDeferredValue, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { CalendarClock, ChevronRight, Flag, PhoneCall, Search, Users } from "lucide-react";
+import { CalendarClock, ChevronRight, Flag, Mail, PhoneCall, Search, Users } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useEkgxLeads, type EkgxLead, type EkgxLeadStatus, type EkgxLeadView } from "@/lib/beta-persistence";
+import { getEkgxLeadMailto, useEkgxLeads, type EkgxLead, type EkgxLeadStatus, type EkgxLeadView } from "@/lib/beta-persistence";
 import { cn } from "@/lib/utils";
 
 function formatLeadStatus(status: EkgxLeadStatus) {
@@ -109,10 +109,19 @@ function QueueMetric({
 }
 
 function LeadCard({ lead, onOpen }: { lead: EkgxLead; onOpen: () => void }) {
+  const emailHref = getEkgxLeadMailto(lead);
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       className="w-full rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-[0_18px_40px_-34px_rgba(15,23,42,0.5)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_22px_48px_-34px_rgba(15,23,42,0.55)]"
     >
       <div className="flex items-start justify-between gap-3">
@@ -158,12 +167,24 @@ function LeadCard({ lead, onOpen }: { lead: EkgxLead; onOpen: () => void }) {
 
       <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
         <span className="text-sm text-slate-500">{lead.lastContactSummary || "No outreach logged yet"}</span>
-        <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-900">
-          Open lead
-          <ChevronRight className="size-4" />
-        </span>
+        <div className="flex items-center gap-2">
+          {emailHref ? (
+            <a
+              href={emailHref}
+              onClick={(event) => event.stopPropagation()}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+            >
+              <Mail className="size-4" />
+              Email
+            </a>
+          ) : null}
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-900">
+            Open lead
+            <ChevronRight className="size-4" />
+          </span>
+        </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -324,66 +345,85 @@ export default function EkgxLeads() {
                             <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Submitted</TableHead>
                             <TableHead className="min-w-[220px] px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Last Contact</TableHead>
                             <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Status</TableHead>
+                            <TableHead className="px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Email</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {visibleLeads.map((lead) => (
-                            <TableRow
-                              key={lead.id}
-                              className="cursor-pointer border-slate-200 hover:bg-slate-50/80"
-                              onClick={() => navigate(`/ekgx-leads/${lead.id}`)}
-                            >
-                              <TableCell className="px-4 py-4">
-                                <div className="flex items-start gap-3">
-                                  <div className="flex min-w-0 items-start gap-3">
-                                    <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-700">
-                                      {lead.businessName.slice(0, 2).toUpperCase()}
-                                    </span>
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <div className="truncate text-sm font-semibold text-slate-950">{lead.businessName}</div>
-                                        {lead.flagged ? <Flag className="size-3.5 shrink-0 fill-amber-500 text-amber-500" /> : null}
+                          {visibleLeads.map((lead) => {
+                            const emailHref = getEkgxLeadMailto(lead);
+
+                            return (
+                              <TableRow
+                                key={lead.id}
+                                className="cursor-pointer border-slate-200 hover:bg-slate-50/80"
+                                onClick={() => navigate(`/ekgx-leads/${lead.id}`)}
+                              >
+                                <TableCell className="px-4 py-4">
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex min-w-0 items-start gap-3">
+                                      <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-700">
+                                        {lead.businessName.slice(0, 2).toUpperCase()}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <div className="truncate text-sm font-semibold text-slate-950">{lead.businessName}</div>
+                                          {lead.flagged ? <Flag className="size-3.5 shrink-0 fill-amber-500 text-amber-500" /> : null}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">{formatOptional(lead.country, lead.source)}</div>
                                       </div>
-                                      <div className="mt-1 text-xs text-slate-500">{formatOptional(lead.country, lead.source)}</div>
                                     </div>
                                   </div>
-                                </div>
-                              </TableCell>
-                              <TableCell className="px-4 py-4">
-                                <div className="text-sm font-medium text-slate-900">{lead.contactName}</div>
-                                <div className="mt-1 text-xs text-slate-500">{lead.email || lead.phone || "No direct contact info"}</div>
-                              </TableCell>
-                              <TableCell className="px-4 py-4">
-                                <div className="text-sm text-slate-900">{formatOptional(lead.businessType)}</div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {formatOptional(lead.jobTitle)} • {formatOptional(lead.purchaseTimeline)}
-                                </div>
-                                {hasLocations(lead) ? (
-                                  <div className="mt-2 text-xs text-slate-500">{lead.locations} locations</div>
-                                ) : null}
-                              </TableCell>
-                              <TableCell className="px-4 py-4 text-sm text-slate-900">
-                                <div>{formatLeadDate(lead.submittedAt)}</div>
-                                <div className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
-                                  <CalendarClock className="size-3.5" />
-                                  {formatLeadTime(lead.submittedAt)}
-                                </div>
-                              </TableCell>
-                              <TableCell className="px-4 py-4">
-                                <div className="text-sm text-slate-900">
-                                  {lead.lastContactAt ? formatLeadDate(lead.lastContactAt) : "No outreach logged"}
-                                </div>
-                                <div className="mt-1 line-clamp-2 text-xs text-slate-500">
-                                  {lead.lastContactSummary || "Open the lead to log the first touchpoint."}
-                                </div>
-                              </TableCell>
-                              <TableCell className="px-4 py-4">
-                                <Badge variant="outline" className={getLeadStatusBadgeClass(lead.status)}>
-                                  {formatLeadStatus(lead.status)}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                                </TableCell>
+                                <TableCell className="px-4 py-4">
+                                  <div className="text-sm font-medium text-slate-900">{lead.contactName}</div>
+                                  <div className="mt-1 text-xs text-slate-500">{lead.email || lead.phone || "No direct contact info"}</div>
+                                </TableCell>
+                                <TableCell className="px-4 py-4">
+                                  <div className="text-sm text-slate-900">{formatOptional(lead.businessType)}</div>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {formatOptional(lead.jobTitle)} • {formatOptional(lead.purchaseTimeline)}
+                                  </div>
+                                  {hasLocations(lead) ? (
+                                    <div className="mt-2 text-xs text-slate-500">{lead.locations} locations</div>
+                                  ) : null}
+                                </TableCell>
+                                <TableCell className="px-4 py-4 text-sm text-slate-900">
+                                  <div>{formatLeadDate(lead.submittedAt)}</div>
+                                  <div className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
+                                    <CalendarClock className="size-3.5" />
+                                    {formatLeadTime(lead.submittedAt)}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="px-4 py-4">
+                                  <div className="text-sm text-slate-900">
+                                    {lead.lastContactAt ? formatLeadDate(lead.lastContactAt) : "No outreach logged"}
+                                  </div>
+                                  <div className="mt-1 line-clamp-2 text-xs text-slate-500">
+                                    {lead.lastContactSummary || "Open the lead to log the first touchpoint."}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="px-4 py-4">
+                                  <Badge variant="outline" className={getLeadStatusBadgeClass(lead.status)}>
+                                    {formatLeadStatus(lead.status)}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="px-4 py-4">
+                                  {emailHref ? (
+                                    <a
+                                      href={emailHref}
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+                                    >
+                                      <Mail className="size-4" />
+                                      Email
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs text-slate-400">No email</span>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>
